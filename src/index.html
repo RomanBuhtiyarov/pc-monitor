@@ -97,10 +97,13 @@ function render(d) {
   <div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>
   <div class="scroll">${!a ? '<div class="empty">Сканирую процессы…</div>' : `
     ${sus.length ? `<h4>Подозрительные (${sus.length})</h4><div class="grp sus">${sus.map(proc).join('')}</div>` : ''}
+    ${a.llm && (a.llm.tools.length || a.llm.local.length) ? `<h4>LLM: инструменты и модели</h4><div class="grp">
+      ${a.llm.local.map(m => `<div class="ss"><span class="on"></span><span class="nm" title="${esc(m.model)}">${esc(m.runtime === 'ollama' ? 'Ollama' : 'LM Studio')} · ${esc(m.model)}</span><span class="v">${m.sizeMB ? fmtMem(m.sizeMB) + (m.vramMB ? ' (GPU ' + fmtMem(m.vramMB) + ')' : '') : 'загружена'}${m.expiresInMin != null ? ' · ещё ' + m.expiresInMin + 'м' : ''}</span>${m.runtime === 'ollama' ? `<button data-unload="${esc(m.model)}" data-rt="ollama">Выгрузить</button>` : ''}</div>`).join('')}
+      ${a.llm.tools.map(t => `<div class="ss"><span class="nm">${esc(t.label)}<small style="color:var(--mut);margin-left:4px">${esc(t.kind)}</small></span><span class="v">${t.procs} проц. · ${fmtMem(t.memMB)} · ${t.cpu}% · ${fmtAge(t.ageMin)}</span></div>`).join('')}</div>` : ''}
     <h4>Проекты и процессы</h4>
     ${a.groups.map(g => `<details class="grp" data-k="${esc(g.key)}" ${open.has(g.key) ? 'open' : ''}><summary><span class="n">${esc(g.name)}</span><span class="m">${g.procs.length} · ${fmtMem(g.memMB)} · ${g.cpu}%</span></summary>${g.procs.map(proc).join('')}</details>`).join('') || '<div class="empty">Нет данных</div>'}
     ${a.browsers.length ? `<h4>Браузеры</h4><div class="grp">${a.browsers.map(b => `<div class="ss"><span class="nm">${esc(b.name)}</span><span class="v">${b.count} проц. · ${fmtMem(b.memMB)} · ${b.cpu.toFixed(0)}%</span></div>`).join('')}</div>` : ''}
-    ${a.sessions.length ? `<h4>Сессии Claude Code</h4><div class="grp">${a.sessions.map(x => `<div class="ss"><span class="${x.active ? 'on' : 'off'}"></span><span class="nm" title="${esc(x.cwd)}">${esc(x.name)}</span><span class="v">${x.active ? 'активна' : fmtAge(Math.round((Date.now() - x.last) / 60000)) + ' назад'}</span></div>`).join('')}</div>` : ''}`}
+    ${a.sessions.length ? `<h4>LLM-сессии (CLI)</h4><div class="grp">${a.sessions.map(x => `<div class="ss"><span class="${x.active ? 'on' : 'off'}"></span><span class="nm" title="${esc(x.cwd)}">${esc(x.name)}<small style="color:var(--mut);margin-left:4px">${esc(x.tool || '')}</small></span><span class="v">${x.active ? 'активна' : fmtAge(Math.round((Date.now() - x.last) / 60000)) + ' назад'}</span></div>`).join('')}</div>` : ''}`}
   </div></div>`;
   const ns = $('.scroll'); if (ns) ns.scrollTop = top;
   $('#x').onclick = () => api.closePanel();
@@ -117,7 +120,9 @@ if (view === 'widget') {
   document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
 }
 document.addEventListener('click', async e => {
-  const b = e.target.closest('button[data-pid]'); if (!b) return;
+  const u = e.target.closest('button[data-unload]');
+  if (u) { u.disabled = true; const r = await api.unloadModel({ runtime: u.dataset.rt, model: u.dataset.unload }); u.textContent = r.ok ? '✓' : '!'; u.title = r.msg; return; }
+  const b =e.target.closest('button[data-pid]'); if (!b) return;
   b.disabled = true;
   const r = await api.kill({ pid: +b.dataset.pid, name: b.dataset.name, memMB: +b.dataset.mem, project: b.dataset.proj });
   b.disabled = false; if (!r.ok) b.title = r.msg;

@@ -1,6 +1,7 @@
 // Process scan: categorize, group by project, flag suspicious ones. Kept lightweight on purpose.
 const { execFile } = require('child_process');
 const os = require('os'), fs = require('fs'), path = require('path');
+const llm = require('./llm');
 
 const BROWSER = /^(chrome|msedge|firefox|brave|opera|vivaldi)\.exe$/i;
 const IDE = /^(code|cursor|windsurf|idea64|pycharm64|webstorm64|rider64|devenv|studio64|zed)\.exe$/i;
@@ -62,7 +63,7 @@ function claudeSessions() {
       const m = buf.toString('utf8').match(/"cwd":"(?:[^"\\]|\\.)*"/g);
       let cwd = m ? JSON.parse('{' + m[m.length - 1] + '}').cwd : null;
       if (!cwd) continue;
-      res.push({ cwd, births, name: path.basename(cwd), last: newest.m, active: Date.now() - newest.m < 5 * 60e3 });
+      res.push({ tool: 'Claude Code', cwd, births, name: path.basename(cwd), last: newest.m, active: Date.now() - newest.m < 5 * 60e3 });
     } catch {}
   }
   return res.sort((a, b) => b.last - a.last).slice(0, 12);
@@ -96,9 +97,10 @@ function projectOf(cmd, roots, sessions) {
 const cpuStreak = new Map();
 
 async function scan(cfg) {
-  const [list, nr] = await Promise.all([listProcesses(), notResponding()]);
+  const [list, nr, local] = await Promise.all([listProcesses(), notResponding(), llm.localModels()]);
   const pids = new Set(list.map(p => p.pid));
-  const sessions = claudeSessions();
+  const sessions = claudeSessions().concat(llm.codexSessions()).sort((a, b) => b.last - a.last).slice(0, 15);
+  const tools = llm.summarizeTools(list);
   const roots = cfg.projectRoots || [];
 
   const procs = [], byPid = new Map(), seen = new Set();
@@ -147,7 +149,7 @@ async function scan(cfg) {
   gl.forEach(g => { g.procs.sort((a, b) => b.memMB - a.memMB); g.cpu = +g.cpu.toFixed(1); });
   const suspects = procs.filter(p => p.flags.length).sort((a, b) => b.memMB - a.memMB);
   const top = procs.slice().sort((a, b) => b.memMB - a.memMB)[0] || null;
-  return { groups: gl, suspects, sessions, browsers: Object.values(browsers), top, at: Date.now() };
+  return { groups: gl, suspects, sessions, llm: { tools, local }, browsers: Object.values(browsers), top, at: Date.now() };
 }
 
 module.exports = { scan };

@@ -174,6 +174,14 @@ ipcMain.on('widget-drag', (_e, { phase, x, y }) => {
     widget.setBounds({ x: Math.round(nx), y: Math.round(ny), width: dragOff.w, height: dragOff.h });
   } else { const [px, py] = widget.getPosition(); cfg.widgetPos = { x: px, y: py }; saveCfg(); dragOff = null; }
 });
+ipcMain.handle('unload-model', async (_e, { runtime, model }) => {
+  // only models the last scan actually reported as loaded can be unloaded
+  const known = analysis && analysis.llm && analysis.llm.local.some(m => m.runtime === runtime && m.model === model);
+  if (!known || runtime !== 'ollama') return { ok: false, msg: 'Выгрузка поддерживается только для Ollama' };
+  const ok = await require('./src/llm').unloadOllama(model);
+  setTimeout(scanTick, 800);
+  return { ok, msg: ok ? 'Выгружено' : 'Не удалось выгрузить' };
+});
 ipcMain.on('open-panel', togglePanel);
 ipcMain.on('close-panel', () => panel && !panel.isDestroyed() && panel.close());
 ipcMain.on('widget-menu', () => Menu.buildFromTemplate([
