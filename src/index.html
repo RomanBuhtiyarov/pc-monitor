@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<style>
+:root{--bg:rgba(24,26,32,.92);--fg:#e8eaf0;--mut:#8b91a0;--line:rgba(255,255,255,.08);--ok:#22c55e;--warn:#facc15;--crit:#ef4444;--acc:#6aa3ff}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px/1.35 "Segoe UI Variable","Segoe UI",sans-serif;color:var(--fg);user-select:none}
+.card{height:100%;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+.hd{display:flex;align-items:center;gap:7px;font-weight:600;-webkit-app-region:drag}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px currentColor;color:var(--ok)}
+.l1 .dot{background:var(--warn);color:var(--warn)}.l2 .dot{background:var(--crit);color:var(--crit)}
+.hd small{margin-left:auto;color:var(--mut);font-weight:400}
+.row{display:grid;grid-template-columns:34px 1fr 40px;align-items:center;gap:8px}
+.row b{color:var(--mut);font-weight:500;font-size:11px}.row i{font-style:normal;text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar span{display:block;height:100%;width:0;border-radius:3px;background:var(--ok);transition:width .4s,background .3s}
+.net{display:flex;justify-content:space-between;color:var(--mut);font-variant-numeric:tabular-nums;font-size:11.5px}
+.net em{font-style:normal;color:var(--fg)}
+.gauge{display:block;margin:0 auto}
+.gauge .t{fill:var(--mut);font-size:7px;text-anchor:middle}
+#nd,#nu{transition:transform 1.2s cubic-bezier(.2,.8,.2,1)}
+.widget .card{cursor:grab}.widget .hd{-webkit-app-region:no-drag}
+/* panel */
+.panel .card{padding:14px;gap:10px}
+.panel .hd{font-size:14px}.panel .x{margin-left:auto;cursor:pointer;color:var(--mut);padding:0 4px;-webkit-app-region:no-drag}
+.status{font-size:12px;color:var(--mut)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
+#app{height:100%}
+.card{overflow:hidden}
+.scroll{flex:1 1 0;min-height:0;overflow-y:auto;margin:0 -6px;padding:0 6px;display:flex;flex-direction:column;gap:8px}
+.scroll::-webkit-scrollbar{width:6px}.scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}
+h4{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);margin-top:2px}
+.grp{background:rgba(255,255,255,.04);border-radius:10px;padding:6px 8px}
+.grp>summary{display:flex;gap:8px;cursor:pointer;list-style:none;align-items:center}
+.grp>summary::-webkit-details-marker{display:none}
+.grp>summary .n{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grp>summary .m{color:var(--mut);font-variant-numeric:tabular-nums}
+.p{display:flex;align-items:center;gap:6px;padding:4px 0;border-top:1px solid var(--line)}
+.p:first-of-type{margin-top:6px}
+.p .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.p .nm small{color:var(--mut);margin-left:4px}
+.chip{font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(106,163,255,.15);color:var(--acc)}
+.flag{font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(239,68,68,.18);color:#ff8a8a;white-space:nowrap}
+.p .v{color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap}
+button{font:inherit;font-size:11px;border:0;border-radius:6px;padding:2px 8px;background:rgba(239,68,68,.2);color:#ff9a9a;cursor:pointer}
+button:hover{background:rgba(239,68,68,.35)}
+.sus{border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.07)}
+.ss{display:flex;gap:8px;align-items:center;padding:2px 0}.ss .nm{flex:1}.ss .v{color:var(--mut)}
+.on{width:7px;height:7px;border-radius:50%;background:var(--ok)}.off{width:7px;height:7px;border-radius:50%;background:#555}
+.empty{color:var(--mut);padding:4px 0}
+</style></head>
+<body><div id="app"></div>
+<script>
+const view = new URLSearchParams(location.search).get('view');
+document.body.className = view;
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtB = v => v > 1048576 ? (v / 1048576).toFixed(1) + ' МБ/с' : v > 1024 ? (v / 1024).toFixed(0) + ' КБ/с' : v.toFixed(0) + ' Б/с';
+const fmtMem = m => m >= 1024 ? (m / 1024).toFixed(1) + ' ГБ' : m + ' МБ';
+const fmtAge = m => m >= 1440 ? Math.floor(m / 1440) + 'д' : m >= 60 ? Math.floor(m / 60) + 'ч' : m + 'м';
+const col = (v, c) => v >= c.crit ? 'var(--crit)' : v >= c.warn ? 'var(--warn)' : 'var(--ok)';
+const metric = (n, v, c) => v == null ? '' : `<div class="row"><b>${n}</b><div class="bar"><span style="width:${Math.min(100, v)}%;background:${col(v, c)}"></span></div><i>${v.toFixed(0)}%</i></div>`;
+// analog speed gauge: log scale 1 KB/s .. 100 MB/s, needle follows the average of the last ~4.5 s
+const samples = []; let prevD = 0, prevU = 0;
+function avg(key, rx, tx) { const now = Date.now(); samples.push({ t: now, rx, tx }); while (samples[0].t < now - 4500) samples.shift(); return samples.reduce((a, x) => a + x[key], 0) / samples.length; }
+const posOf = v => Math.max(0, Math.min(1, Math.log10(Math.max(v, 1000) / 1000) / 5));
+const CX = 100, CY = 54, R = 44;
+const pt = (p, r) => { const a = Math.PI * (1 - p); return [CX + r * Math.cos(a), CY - r * Math.sin(a)]; };
+function gaugeSvg(dDeg, uDeg) {
+  let ticks = '';
+  [['1K', 0], ['10K', .2], ['100K', .4], ['1M', .6], ['10M', .8], ['100M', 1]].forEach(([l, p]) => { const [x1, y1] = pt(p, R - 1), [x2, y2] = pt(p, R + 4), [tx, ty] = pt(p, R + 11); ticks += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#8b91a0" stroke-width="1"/><text class="t" x="${tx}" y="${ty + 2}">${l}</text>`; });
+  const arc = (a, b, c) => { const [x1, y1] = pt(a, R), [x2, y2] = pt(b, R); return `<path d="M${x1} ${y1} A${R} ${R} 0 0 1 ${x2} ${y2}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round" opacity=".55"/>`; };
+  return `<svg class="gauge" width="206" height="66" viewBox="0 0 200 64">${arc(0, .6, '#22c55e')}${arc(.6, .85, '#facc15')}${arc(.85, 1, '#ef4444')}${ticks}
+  <g id="nu" style="transform-origin:${CX}px ${CY}px;transform:rotate(${uDeg}deg)"><line x1="${CX}" y1="${CY}" x2="${CX - 34}" y2="${CY}" stroke="#6aa3ff" stroke-width="1.3" stroke-linecap="round"/></g>
+  <g id="nd" style="transform-origin:${CX}px ${CY}px;transform:rotate(${dDeg}deg)"><line x1="${CX}" y1="${CY}" x2="${CX - 40}" y2="${CY}" stroke="#e8eaf0" stroke-width="2" stroke-linecap="round"/></g>
+  <circle cx="${CX}" cy="${CY}" r="3.5" fill="#e8eaf0"/></svg>`;
+}
+const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];
+
+function render(d) {
+  const { stats: s, level, worst, analysis: a, cfg } = d, c = cfg;
+  const m = metric('CPU', s.cpu, c) + metric('RAM', s.ram, c) + metric('GPU', s.gpu, c) + metric('Диск', s.disk, { warn: 85, crit: 95 });
+  if (view === 'widget') {
+    $('#app').innerHTML = `<div class="card l${level}" id="w"><div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${gaugeSvg(prevD, prevU)}</div>`;
+    const dd = posOf(avg('rx', s.rx, s.tx)) * 180, uu = posOf(samples.reduce((a, x) => a + x.tx, 0) / samples.length) * 180;
+    const nd = $('#nd'); nd.getBoundingClientRect(); nd.style.transform = `rotate(${dd}deg)`; $('#nu').style.transform = `rotate(${uu}deg)`;
+    prevD = dd; prevU = uu;
+    return;
+  }
+  const sus = a ? a.suspects : [];
+  const proc = (p, k) => `<div class="p"><span class="nm">${esc(p.name)}<small>${p.pid} · ${fmtAge(p.ageMin)}</small></span><span class="chip">${p.cat}</span>${p.flags.map(f => `<span class="flag">${esc(f)}</span>`).join('')}<span class="v">${fmtMem(p.memMB)} · ${p.cpu}%</span><button data-pid="${p.pid}" data-name="${esc(p.name)}" data-mem="${p.memMB}" data-proj="${esc(p.project || '')}">✕</button></div>`;
+  const open = new Set([...document.querySelectorAll('details[open]')].map(x => x.dataset.k));
+  const sc = $('.scroll'), top = sc ? sc.scrollTop : 0;
+  $('#app').innerHTML = `<div class="card l${level}"><div class="hd"><span class="dot"></span>PC Monitor<span class="x" id="x">✕</span></div>
+  <div class="status">${STATUS[level]}${level ? ' — ' + esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : ''} · RAM ${s.ramUsedGB.toFixed(1)} / ${s.ramTotalGB.toFixed(0)} ГБ</div>
+  <div class="grid">${m}</div>
+  <div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>
+  <div class="scroll">${!a ? '<div class="empty">Сканирую процессы…</div>' : `
+    ${sus.length ? `<h4>Подозрительные (${sus.length})</h4><div class="grp sus">${sus.map(proc).join('')}</div>` : ''}
+    <h4>Проекты и процессы</h4>
+    ${a.groups.map(g => `<details class="grp" data-k="${esc(g.key)}" ${open.has(g.key) ? 'open' : ''}><summary><span class="n">${esc(g.name)}</span><span class="m">${g.procs.length} · ${fmtMem(g.memMB)} · ${g.cpu}%</span></summary>${g.procs.map(proc).join('')}</details>`).join('') || '<div class="empty">Нет данных</div>'}
+    ${a.browsers.length ? `<h4>Браузеры</h4><div class="grp">${a.browsers.map(b => `<div class="ss"><span class="nm">${esc(b.name)}</span><span class="v">${b.count} проц. · ${fmtMem(b.memMB)} · ${b.cpu.toFixed(0)}%</span></div>`).join('')}</div>` : ''}
+    ${a.sessions.length ? `<h4>Сессии Claude Code</h4><div class="grp">${a.sessions.map(x => `<div class="ss"><span class="${x.active ? 'on' : 'off'}"></span><span class="nm" title="${esc(x.cwd)}">${esc(x.name)}</span><span class="v">${x.active ? 'активна' : fmtAge(Math.round((Date.now() - x.last) / 60000)) + ' назад'}</span></div>`).join('')}</div>` : ''}`}
+  </div></div>`;
+  const ns = $('.scroll'); if (ns) ns.scrollTop = top;
+  $('#x').onclick = () => api.closePanel();
+}
+
+if (view === 'widget') {
+  document.addEventListener('contextmenu', e => { e.preventDefault(); api.widgetMenu(); });
+  document.addEventListener('dblclick', () => api.openPanel());
+  // drag the widget by any point (JS-based so right-click and double-click keep working)
+  let dragging = false;
+  document.addEventListener('pointerdown', e => { if (e.button !== 0) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
+  document.addEventListener('pointermove', e => { if (dragging) api.drag('move', e.screenX, e.screenY); });
+  const end = e => { if (dragging) { dragging = false; api.drag('end', e.screenX, e.screenY); } };
+  document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest('button[data-pid]'); if (!b) return;
+  b.disabled = true;
+  const r = await api.kill({ pid: +b.dataset.pid, name: b.dataset.name, memMB: +b.dataset.mem, project: b.dataset.proj });
+  b.disabled = false; if (!r.ok) b.title = r.msg;
+});
+api.onStats(render);
+</script></body></html>

@@ -1,0 +1,48 @@
+{
+  "name": "pc-monitor",
+  "version": "0.1.0",
+  "description": "Desktop widget showing live PC stats on Windows",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable nsis"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "systeminformation": "^5.33.19"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "local.pcmonitor",
+    "productName": "PC Monitor",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "artifactName": "PC-Monitor-Setup-${version}.${ext}"
+    },
+    "compression": "normal",
+    "portable": {
+      "artifactName": "PC-Monitor-${version}-portable.${ext}"
+    }
+  },
+  "author": "PC Monitor"
+}
