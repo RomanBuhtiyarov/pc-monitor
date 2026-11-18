@@ -75,10 +75,33 @@ function gaugeSvg(dDeg, uDeg) {
   <g id="nd" style="transform-origin:${CX}px ${CY}px;transform:rotate(${dDeg}deg)"><line x1="${CX}" y1="${CY}" x2="${CX - 40}" y2="${CY}" stroke="#e8eaf0" stroke-width="2" stroke-linecap="round"/></g>
   <circle cx="${CX}" cy="${CY}" r="3.5" fill="#e8eaf0"/></svg>`;
 }
+const fmtTok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
+const fmtIn = ms => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? Math.floor(m / 60) + 'ч ' + (m % 60) + 'м' : m + 'м'; };
+const tokBar = (v, max) => { const p = Math.min(100, v / max * 100); return `<div class="bar" style="margin:1px 0 5px"><span style="width:${p}%;background:${col(p, { warn: 80, crit: 95 })}"></span></div>`; };
+function usageBlock(us, bud) {
+  if (!us) return '<h4>Расход токенов</h4><div class="grp"><div class="empty">Читаю журналы сессий…</div></div>';
+  bud = bud || {};
+  const row = (label, w, budget, withCost) => `<div class="ss"><span class="nm">${label}</span><span class="v">${fmtTok(w.newTok)} · вых ${fmtTok(w.out)} · кэш ${fmtTok(w.cr)}${withCost && w.cost ? ' · ≈$' + w.cost.toFixed(2) : ''}</span></div>${budget > 0 ? tokBar(w.newTok, budget) : ''}`;
+  const c = us.claude, x = us.codex;
+  const projs = (l) => l.projects.length ? `<div class="ss"><span class="nm" style="color:var(--mut)">Сегодня по проектам</span></div>` + l.projects.map(p => `<div class="ss"><span class="nm">${esc(p.name)}</span><span class="v">${fmtTok(p.newTok)} · ${p.msgs} отв.</span></div>`).join('') : '';
+  let h = '<h4>Расход токенов (локально, по журналам)</h4><div class="grp">';
+  h += `<div class="ss"><span class="nm"><b>Claude Code</b></span><span class="v">${c.today.msgs} ответов сегодня</span></div>`;
+  h += row('Сегодня', c.today, bud.claudeDay, true) + row('Последние 5 ч', c.h5, bud.claude5h, true) + row('7 дней', c.d7, bud.claudeWeek, true) + projs(c);
+  h += '<div class="ss"><span class="nm" style="color:var(--mut)">«≈$» — оценка по прайсу API; на подписке это не счёт</span></div>';
+  if (x.d7.msgs || x.limits) {
+    h += `<div class="ss" style="margin-top:6px"><span class="nm"><b>Codex</b>${x.limits && x.limits.plan ? '<small style="color:var(--mut);margin-left:4px">' + esc(x.limits.plan) + '</small>' : ''}</span><span class="v">${x.today.msgs} запросов сегодня</span></div>`;
+    h += row('Сегодня', x.today, 0, false) + row('7 дней', x.d7, 0, false);
+    if (x.limits) {
+      const now = Date.now();
+      h += x.limits.windows.map(w => `<div class="ss"><span class="nm">Лимит ${w.windowMin >= 1440 ? Math.round(w.windowMin / 1440) + ' дн' : Math.round(w.windowMin / 60) + ' ч'}</span><span class="v">${w.expired ? 'окно закончилось · данные от ' + new Date(x.limits.asOf).toLocaleDateString('ru') : w.usedPct + '% · сброс через ' + fmtIn(w.resetsAt - now)}</span></div>` + (w.expired ? '' : tokBar(w.usedPct, 100))).join('');
+    }
+  }
+  return h + '</div>';
+}
 const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];
 
 function render(d) {
-  const { stats: s, level, worst, analysis: a, cfg } = d, c = cfg;
+  const { stats: s, level, worst, analysis: a, cfg, usage: us } = d, c = cfg;
   const m = metric('CPU', s.cpu, c) + metric('RAM', s.ram, c) + metric('GPU', s.gpu, c) + metric('Диск', s.disk, { warn: 85, crit: 95 });
   if (view === 'widget') {
     $('#app').innerHTML = `<div class="card l${level}" id="w"><div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${gaugeSvg(prevD, prevU)}</div>`;
@@ -100,6 +123,7 @@ function render(d) {
     ${a.llm && (a.llm.tools.length || a.llm.local.length) ? `<h4>LLM: инструменты и модели</h4><div class="grp">
       ${a.llm.local.map(m => `<div class="ss"><span class="on"></span><span class="nm" title="${esc(m.model)}">${esc(m.runtime === 'ollama' ? 'Ollama' : 'LM Studio')} · ${esc(m.model)}</span><span class="v">${m.sizeMB ? fmtMem(m.sizeMB) + (m.vramMB ? ' (GPU ' + fmtMem(m.vramMB) + ')' : '') : 'загружена'}${m.expiresInMin != null ? ' · ещё ' + m.expiresInMin + 'м' : ''}</span>${m.runtime === 'ollama' ? `<button data-unload="${esc(m.model)}" data-rt="ollama">Выгрузить</button>` : ''}</div>`).join('')}
       ${a.llm.tools.map(t => `<div class="ss"><span class="nm">${esc(t.label)}<small style="color:var(--mut);margin-left:4px">${esc(t.kind)}</small></span><span class="v">${t.procs} проц. · ${fmtMem(t.memMB)} · ${t.cpu}% · ${fmtAge(t.ageMin)}</span></div>`).join('')}</div>` : ''}
+    ${usageBlock(us, c.budgets)}
     <h4>Проекты и процессы</h4>
     ${a.groups.map(g => `<details class="grp" data-k="${esc(g.key)}" ${open.has(g.key) ? 'open' : ''}><summary><span class="n">${esc(g.name)}</span><span class="m">${g.procs.length} · ${fmtMem(g.memMB)} · ${g.cpu}%</span></summary>${g.procs.map(proc).join('')}</details>`).join('') || '<div class="empty">Нет данных</div>'}
     ${a.browsers.length ? `<h4>Браузеры</h4><div class="grp">${a.browsers.map(b => `<div class="ss"><span class="nm">${esc(b.name)}</span><span class="v">${b.count} проц. · ${fmtMem(b.memMB)} · ${b.cpu.toFixed(0)}%</span></div>`).join('')}</div>` : ''}

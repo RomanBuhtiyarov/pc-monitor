@@ -3,13 +3,14 @@ const path = require('path'), fs = require('fs');
 const { execFile } = require('child_process');
 const si = require('systeminformation');
 const { scan } = require('./src/procs');
+const usage = require('./src/usage');
 
 app.disableHardwareAcceleration();           // fewer GPU-process resources
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=64');
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('local.pcmonitor');
 
-const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true };
+const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true, budgets: { claude5h: 0, claudeDay: 0, claudeWeek: 0 } };
 let cfgFile, cfg = { ...DEFAULTS };
 const saveCfg = () => { try { fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2)); } catch {} };
 
@@ -66,7 +67,7 @@ function maybeNotify() {
   new Notification({ title: `Перегрузка: ${worst.name} ${worst.v.toFixed(0)}%`, body: t ? `Больше всего памяти: ${t.name} (${t.memMB} МБ)${t.project ? ' — ' + t.project : ''}. Откройте PC Monitor.` : 'Откройте PC Monitor, чтобы увидеть детали.' }).show();
 }
 const visible = w => w && !w.isDestroyed() && w.isVisible();
-const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, cfg: { warn: cfg.warn, crit: cfg.crit } }); };
+const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, usage: usage.summary(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets } }); };
 
 async function fastTick() {
   try {
@@ -119,7 +120,7 @@ function togglePanel() {
   const x = Math.max(wa.x + 4, Math.min(b.x + b.width / 2 - W / 2, wa.x + wa.width - W - 4)), y = wa.y + wa.height - h - 8;
   panel = new BrowserWindow({ width: W, height: h, x: Math.round(x), y: Math.round(y), frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, webPreferences: webPrefs });
   panel.loadFile(path.join(__dirname, 'src', 'index.html'), { query: { view: 'panel' } });
-  panel.once('ready-to-show', () => { panel.show(); panel.focus(); scanTick(); });
+  panel.once('ready-to-show', () => { panel.show(); panel.focus(); scanTick(); usage.refresh().then(broadcast).catch(() => {}); });
   panel.on('blur', () => { if (panel && !panel.isDestroyed() && !killing) panel.close(); });
   panel.on('closed', () => { panel = null; });   // renderer freed when closed
 }
@@ -198,6 +199,10 @@ app.whenReady().then(() => {
   for (const ev of ['unlock-screen', 'resume']) powerMonitor.on(ev, () => setTimeout(ensureWidget, 1500));
   for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(ev, () => setTimeout(ensureWidget, 1000));
   fastTick(); diskTick(); gpuTick(); scanTick(); setTimeout(scanLoop, 3000);
+  usage.init(app.getPath('userData'));
+  const usageLoop = () => usage.refresh().then(broadcast).catch(() => {}).finally(() => setTimeout(usageLoop, visible(panel) ? 30000 : 300000));
+  setTimeout(usageLoop, 10000);   // first full pass of the logs runs in the background shortly after start
 });
 app.on('window-all-closed', e => e.preventDefault());   // live in the tray
 app.on('second-instance', togglePanel);
+app.on('before-quit', () => usage.save());
