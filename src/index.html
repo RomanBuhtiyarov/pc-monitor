@@ -42,6 +42,8 @@ h4{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
 .chip{font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(106,163,255,.15);color:var(--acc)}
 .flag{font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(239,68,68,.18);color:#ff8a8a;white-space:nowrap}
 .p .v{color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap}
+input{font:inherit;font-size:11px;flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;padding:3px 6px;background:rgba(0,0,0,.25);color:var(--fg);user-select:text}
+button.ok{background:rgba(34,197,94,.2);color:#8be3a8}button.ok:hover{background:rgba(34,197,94,.35)}
 button{font:inherit;font-size:11px;border:0;border-radius:6px;padding:2px 8px;background:rgba(239,68,68,.2);color:#ff9a9a;cursor:pointer}
 button:hover{background:rgba(239,68,68,.35)}
 .sus{border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.07)}
@@ -98,9 +100,43 @@ function usageBlock(us, bud) {
   }
   return h + '</div>';
 }
+let keyMsg = '', lastD = null;
+const money = v => '$' + v.toFixed(2);
+function spendBlock(sp, keys, bud) {
+  sp = sp || {}; keys = keys || {}; bud = bud || {};
+  let h = '<h4>Расход по API (организация)</h4><div class="grp">', any = false;
+  for (const p of ['anthropic', 'openai']) {
+    const k = keys[p]; if (!k || !k.configured) continue; any = true;
+    const d = sp[p];
+    h += `<div class="ss"><span class="nm"><b>${esc(k.name)}</b></span><span class="v">${d && d.at ? 'обновлено ' + new Date(d.at).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }) : d && d.error ? '' : 'загрузка…'}</span></div>`;
+    if (d && d.error) h += `<div class="ss"><span class="nm" style="color:#ff8a8a;white-space:normal">${esc(d.error)}</span></div>`;
+    if (d && d.month) {
+      const b = bud[p === 'anthropic' ? 'anthropicMonth' : 'openaiMonth'] || 0;
+      h += `<div class="ss"><span class="nm">Месяц (UTC)</span><span class="v">${money(d.month.cost)} · вх ${fmtTok(d.month.in)} · вых ${fmtTok(d.month.out)}</span></div>${b > 0 ? tokBar(d.month.cost, b) : ''}`;
+      h += `<div class="ss"><span class="nm">7 дней</span><span class="v">${money(d.d7.cost)}</span></div>`;
+      if (d.today) h += `<div class="ss"><span class="nm">Сегодня</span><span class="v">${money(d.today.cost)}</span></div>`;
+      h += d.models.map(m => `<div class="ss"><span class="nm" style="color:var(--mut)">${esc(m.model)}</span><span class="v">${m.cost != null && p === 'anthropic' ? money(m.cost) + ' · ' : ''}${fmtTok(m.in)} / ${fmtTok(m.out)}</span></div>`).join('');
+      if (d.dataAsOf) h += `<div class="ss"><span class="nm" style="color:var(--mut);white-space:normal">Данные Anthropic на ${new Date(d.dataAsOf).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} (задержка до 24 ч)</span></div>`;
+    }
+  }
+  if (!any) h += '<div class="empty">Ключи не подключены — добавьте их ниже (нужны Admin-ключи организации).</div>';
+  h += '</div>';
+  const kopen = document.querySelector('details[data-k="keys"]') ? document.querySelector('details[data-k="keys"]').open : false;
+  h += `<details class="grp" data-k="keys" ${kopen ? 'open' : ''}><summary><span class="n">Ключи API (Admin)</span><span class="m">шифруются Windows</span></summary>`;
+  for (const p of ['anthropic', 'openai']) {
+    const k = keys[p]; if (!k) continue;
+    h += k.configured
+      ? `<div class="ss"><span class="nm">${esc(k.name)} · ключ задан ${esc(k.hint)}</span><button data-keyclear="${p}">Удалить</button></div>`
+      : `<div class="ss"><input type="password" autocomplete="off" spellcheck="false" data-keyin="${p}" placeholder="${p === 'anthropic' ? 'Anthropic Admin-ключ sk-ant-admin…' : 'OpenAI Admin-ключ sk-…'}"><button class="ok" data-keysave="${p}">Сохранить</button></div>`;
+  }
+  h += `<div class="ss"><span class="nm" style="color:var(--mut);white-space:normal">${keyMsg ? esc(keyMsg) : 'Ключ хранится только на этом ПК в зашифрованном виде и уходит только на api.anthropic.com / api.openai.com. Админ-ключ создаётся в консоли организации; для работы нужна организация, а не личный аккаунт.'}</span></div><div class="ss"><button data-refreshspend="1">Обновить расход</button></div></details>`;
+  return h;
+}
 const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];
 
 function render(d) {
+  lastD = d;
+  if (view === 'panel' && document.activeElement && document.activeElement.tagName === 'INPUT') return;   // don't wipe a key being typed
   const { stats: s, level, worst, analysis: a, cfg, usage: us } = d, c = cfg;
   const m = metric('CPU', s.cpu, c) + metric('RAM', s.ram, c) + metric('GPU', s.gpu, c) + metric('Диск', s.disk, { warn: 85, crit: 95 });
   if (view === 'widget') {
@@ -124,6 +160,7 @@ function render(d) {
       ${a.llm.local.map(m => `<div class="ss"><span class="on"></span><span class="nm" title="${esc(m.model)}">${esc(m.runtime === 'ollama' ? 'Ollama' : 'LM Studio')} · ${esc(m.model)}</span><span class="v">${m.sizeMB ? fmtMem(m.sizeMB) + (m.vramMB ? ' (GPU ' + fmtMem(m.vramMB) + ')' : '') : 'загружена'}${m.expiresInMin != null ? ' · ещё ' + m.expiresInMin + 'м' : ''}</span>${m.runtime === 'ollama' ? `<button data-unload="${esc(m.model)}" data-rt="ollama">Выгрузить</button>` : ''}</div>`).join('')}
       ${a.llm.tools.map(t => `<div class="ss"><span class="nm">${esc(t.label)}<small style="color:var(--mut);margin-left:4px">${esc(t.kind)}</small></span><span class="v">${t.procs} проц. · ${fmtMem(t.memMB)} · ${t.cpu}% · ${fmtAge(t.ageMin)}</span></div>`).join('')}</div>` : ''}
     ${usageBlock(us, c.budgets)}
+    ${spendBlock(d.spend, d.keys, c.budgets)}
     <h4>Проекты и процессы</h4>
     ${a.groups.map(g => `<details class="grp" data-k="${esc(g.key)}" ${open.has(g.key) ? 'open' : ''}><summary><span class="n">${esc(g.name)}</span><span class="m">${g.procs.length} · ${fmtMem(g.memMB)} · ${g.cpu}%</span></summary>${g.procs.map(proc).join('')}</details>`).join('') || '<div class="empty">Нет данных</div>'}
     ${a.browsers.length ? `<h4>Браузеры</h4><div class="grp">${a.browsers.map(b => `<div class="ss"><span class="nm">${esc(b.name)}</span><span class="v">${b.count} проц. · ${fmtMem(b.memMB)} · ${b.cpu.toFixed(0)}%</span></div>`).join('')}</div>` : ''}
@@ -144,6 +181,11 @@ if (view === 'widget') {
   document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
 }
 document.addEventListener('click', async e => {
+  const sv = e.target.closest('button[data-keysave]');
+  if (sv) { const p = sv.dataset.keysave, inp = document.querySelector(`input[data-keyin="${p}"]`); const key = inp ? inp.value : ''; if (inp) inp.value = ''; sv.disabled = true; const r = await api.setKey(p, key); keyMsg = r.msg; setTimeout(() => { keyMsg = ''; }, 10000); if (lastD) render(lastD); return; }
+  const cl = e.target.closest('button[data-keyclear]');
+  if (cl) { const r = await api.clearKey(cl.dataset.keyclear); keyMsg = r.msg || ''; if (lastD) render(lastD); return; }
+  if (e.target.closest('button[data-refreshspend]')) { e.target.disabled = true; await api.refreshSpend(); e.target.disabled = false; return; }
   const u = e.target.closest('button[data-unload]');
   if (u) { u.disabled = true; const r = await api.unloadModel({ runtime: u.dataset.rt, model: u.dataset.unload }); u.textContent = r.ok ? '✓' : '!'; u.title = r.msg; return; }
   const b =e.target.closest('button[data-pid]'); if (!b) return;

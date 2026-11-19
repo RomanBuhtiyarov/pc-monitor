@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   onStats: cb => ipcRenderer.on('stats', (_e, d) => cb(d)),
   kill: p => ipcRenderer.invoke('kill', p),
+  setKey: (provider, key) => ipcRenderer.invoke('key-set', { provider, key }),
+  clearKey: provider => ipcRenderer.invoke('key-clear', { provider }),
+  refreshSpend: () => ipcRenderer.invoke('spend-refresh'),
   unloadModel: p => ipcRenderer.invoke('unload-model', p),
   openPanel: () => ipcRenderer.send('open-panel'),
   closePanel: () => ipcRenderer.send('close-panel'),
