@@ -141,6 +141,8 @@ function ensureWidget(force) {
 }
 function buildMenu() {
   return Menu.buildFromTemplate([
+    { label: `PC Monitor v${app.getVersion()}`, enabled: false },
+    { type: 'separator' },
     { label: 'Показать детали', click: togglePanel },
     { label: 'Показать виджет', click: () => setWidget(true) },
     { label: 'Скрыть виджет', click: () => setWidget(false) },
