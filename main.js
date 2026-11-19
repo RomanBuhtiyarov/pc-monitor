@@ -68,7 +68,7 @@ function maybeNotify() {
   new Notification({ title: `Перегрузка: ${worst.name} ${worst.v.toFixed(0)}%`, body: t ? `Больше всего памяти: ${t.name} (${t.memMB} МБ)${t.project ? ' — ' + t.project : ''}. Откройте PC Monitor.` : 'Откройте PC Monitor, чтобы увидеть детали.' }).show();
 }
 const visible = w => w && !w.isDestroyed() && w.isVisible();
-const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, usage: usage.summary(), spend: providers.summary(), keys: providers.status(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets } }); };
+const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets } }); };
 
 async function fastTick() {
   try {

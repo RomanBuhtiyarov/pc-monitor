@@ -150,7 +150,7 @@ function render(d) {
   const proc = (p, k) => `<div class="p"><span class="nm">${esc(p.name)}<small>${p.pid} · ${fmtAge(p.ageMin)}</small></span><span class="chip">${p.cat}</span>${p.flags.map(f => `<span class="flag">${esc(f)}</span>`).join('')}<span class="v">${fmtMem(p.memMB)} · ${p.cpu}%</span><button data-pid="${p.pid}" data-name="${esc(p.name)}" data-mem="${p.memMB}" data-proj="${esc(p.project || '')}">✕</button></div>`;
   const open = new Set([...document.querySelectorAll('details[open]')].map(x => x.dataset.k));
   const sc = $('.scroll'), top = sc ? sc.scrollTop : 0;
-  $('#app').innerHTML = `<div class="card l${level}"><div class="hd"><span class="dot"></span>PC Monitor<span class="x" id="x">✕</span></div>
+  $('#app').innerHTML = `<div class="card l${level}"><div class="hd"><span class="dot"></span>PC Monitor<small style="margin:0 auto 0 6px">v${esc(d.version || '')}</small><span class="x" id="x">✕</span></div>
   <div class="status">${STATUS[level]}${level ? ' — ' + esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : ''} · RAM ${s.ramUsedGB.toFixed(1)} / ${s.ramTotalGB.toFixed(0)} ГБ</div>
   <div class="grid">${m}</div>
   <div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>
