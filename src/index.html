@@ -19,6 +19,11 @@ html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px
 .gauge{display:block;margin:0 auto}
 .gauge .t{fill:var(--mut);font-size:7px;text-anchor:middle}
 #nd,#nu{transition:transform 1.2s cubic-bezier(.2,.8,.2,1)}
+.ctl{display:flex;justify-content:space-between;margin-top:-1px}
+.seg{display:inline-flex;gap:2px}
+.seg button{background:rgba(255,255,255,.07);color:var(--mut);padding:1px 7px;border-radius:5px;font-size:10px;line-height:1.3}
+.seg button:hover{background:rgba(255,255,255,.15)}
+.seg button.on{background:rgba(106,163,255,.28);color:var(--fg)}
 .widget .card{cursor:grab}.widget .hd{-webkit-app-region:no-drag}
 /* panel */
 .panel .card{padding:14px;gap:10px}
@@ -62,21 +67,60 @@ const fmtMem = m => m >= 1024 ? (m / 1024).toFixed(1) + ' ГБ' : m + ' МБ';
 const fmtAge = m => m >= 1440 ? Math.floor(m / 1440) + 'д' : m >= 60 ? Math.floor(m / 60) + 'ч' : m + 'м';
 const col = (v, c) => v >= c.crit ? 'var(--crit)' : v >= c.warn ? 'var(--warn)' : 'var(--ok)';
 const metric = (n, v, c) => v == null ? '' : `<div class="row"><b>${n}</b><div class="bar"><span style="width:${Math.min(100, v)}%;background:${col(v, c)}"></span></div><i>${v.toFixed(0)}%</i></div>`;
-// analog speed gauge: log scale 1 KB/s .. 100 MB/s, needle follows the average of the last ~4.5 s
-const samples = []; let prevD = 0, prevU = 0;
-function avg(key, rx, tx) { const now = Date.now(); samples.push({ t: now, rx, tx }); while (samples[0].t < now - 4500) samples.shift(); return samples.reduce((a, x) => a + x[key], 0) / samples.length; }
+// Network indicator: 3 styles (dial / graph / bars) x 3 channels (both / download / upload).
+// Log scale 1 KB/s .. 100 MB/s; the dial and bars follow the average of the last ~4.5 s.
+const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+let gStyle = lsGet('pcm.style', 'dial'), gCh = lsGet('pcm.ch', 'both');
+const samples = [], hist = [];
+let prevD = 0, prevU = 0, prevBD = 0, prevBU = 0;
+const C_D = '#e8eaf0', C_U = '#6aa3ff', BARW = 130;
+function pushSample(rx, tx) { const now = Date.now(); samples.push({ t: now, rx, tx }); while (samples[0].t < now - 4500) samples.shift(); hist.push({ rx, tx }); if (hist.length > 90) hist.shift(); }
+const avgOf = k => samples.reduce((a, x) => a + x[k], 0) / samples.length;
 const posOf = v => Math.max(0, Math.min(1, Math.log10(Math.max(v, 1000) / 1000) / 5));
+const showD = () => gCh !== 'tx', showU = () => gCh !== 'rx';
 const CX = 100, CY = 54, R = 44;
 const pt = (p, r) => { const a = Math.PI * (1 - p); return [CX + r * Math.cos(a), CY - r * Math.sin(a)]; };
-function gaugeSvg(dDeg, uDeg) {
+function dialSvg(dDeg, uDeg) {
   let ticks = '';
   [['1K', 0], ['10K', .2], ['100K', .4], ['1M', .6], ['10M', .8], ['100M', 1]].forEach(([l, p]) => { const [x1, y1] = pt(p, R - 1), [x2, y2] = pt(p, R + 4), [tx, ty] = pt(p, R + 11); ticks += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#8b91a0" stroke-width="1"/><text class="t" x="${tx}" y="${ty + 2}">${l}</text>`; });
   const arc = (a, b, c) => { const [x1, y1] = pt(a, R), [x2, y2] = pt(b, R); return `<path d="M${x1} ${y1} A${R} ${R} 0 0 1 ${x2} ${y2}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round" opacity=".55"/>`; };
+  const single = gCh !== 'both';
+  const needle = (id, deg, len, color, w) => `<g id="${id}" style="transform-origin:${CX}px ${CY}px;transform:rotate(${deg}deg)"><line x1="${CX}" y1="${CY}" x2="${CX - len}" y2="${CY}" stroke="${color}" stroke-width="${w}" stroke-linecap="round"/></g>`;
+  const label = single ? `<text x="${CX}" y="63" text-anchor="middle" font-size="8" fill="${gCh === 'rx' ? C_D : C_U}">${gCh === 'rx' ? '↓' : '↑'} ${fmtB(avgOf(gCh))}</text>` : '';
   return `<svg class="gauge" width="206" height="66" viewBox="0 0 200 64">${arc(0, .6, '#22c55e')}${arc(.6, .85, '#facc15')}${arc(.85, 1, '#ef4444')}${ticks}
-  <g id="nu" style="transform-origin:${CX}px ${CY}px;transform:rotate(${uDeg}deg)"><line x1="${CX}" y1="${CY}" x2="${CX - 34}" y2="${CY}" stroke="#6aa3ff" stroke-width="1.3" stroke-linecap="round"/></g>
-  <g id="nd" style="transform-origin:${CX}px ${CY}px;transform:rotate(${dDeg}deg)"><line x1="${CX}" y1="${CY}" x2="${CX - 40}" y2="${CY}" stroke="#e8eaf0" stroke-width="2" stroke-linecap="round"/></g>
-  <circle cx="${CX}" cy="${CY}" r="3.5" fill="#e8eaf0"/></svg>`;
+  ${showU() ? needle('nu', uDeg, single ? 40 : 34, C_U, single ? 2 : 1.3) : ''}${showD() ? needle('nd', dDeg, 40, C_D, 2) : ''}
+  <circle cx="${CX}" cy="${CY}" r="3.5" fill="${single && gCh === 'tx' ? C_U : C_D}"/>${label}</svg>`;
 }
+function graphSvg() {
+  const T = 12, B = 60, N = 90, chs = [];
+  if (showD()) chs.push(['rx', C_D]); if (showU()) chs.push(['tx', C_U]);
+  let max = 10240; for (const [k] of chs) for (const h of hist) if (h[k] > max) max = h[k];
+  const series = k => hist.map((h, i) => { const a = hist.slice(Math.max(0, i - 1), i + 2); return a.reduce((s, x) => s + x[k], 0) / a.length; });
+  let g = `<line x1="2" y1="${B}" x2="198" y2="${B}" stroke="rgba(255,255,255,.15)"/><line x1="2" y1="${(B + T) / 2}" x2="198" y2="${(B + T) / 2}" stroke="rgba(255,255,255,.07)" stroke-dasharray="2 3"/>`;
+  for (const [k, c] of chs) {
+    const v = series(k); if (v.length < 2) continue;
+    const pts = v.map((y, i) => [2 + (N - v.length + i) / (N - 1) * 196, B - y / max * (B - T)]);
+    const d = pts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join('');
+    if (chs.length === 1) g += `<path d="${d}L${pts[pts.length - 1][0].toFixed(1)} ${B}L${pts[0][0].toFixed(1)} ${B}Z" fill="${c}" opacity=".15"/>`;
+    g += `<path d="${d}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  g += `<text class="t" x="3" y="8" style="text-anchor:start">макс ${fmtB(max)}</text><text class="t" x="197" y="8" style="text-anchor:end">≈3 мин</text>`;
+  return `<svg class="gauge" width="206" height="66" viewBox="0 0 200 64">${g}</svg>`;
+}
+function barsSvg(bd, bu) {
+  const rows = [];
+  if (showD()) rows.push(['bd', '↓', C_D, bd, 'rx']); if (showU()) rows.push(['bu', '↑', C_U, bu, 'tx']);
+  const one = rows.length === 1, bh = one ? 15 : 10, gap = one ? 0 : 6, y0 = one ? 14 : 8;
+  let g = '';
+  rows.forEach((r, i) => {
+    const y = y0 + i * (bh + gap);
+    g += `<text x="2" y="${y + bh - 2}" fill="${r[2]}" font-size="${one ? 13 : 10}">${r[1]}</text><rect x="16" y="${y}" width="${BARW}" height="${bh}" rx="${bh / 2}" fill="rgba(255,255,255,.08)"/><rect id="${r[0]}" x="16" y="${y}" width="${r[3] * BARW}" height="${bh}" rx="${bh / 2}" fill="${r[2]}" opacity=".85" style="transition:width 1.2s cubic-bezier(.2,.8,.2,1)"/><text x="198" y="${y + bh - 2}" text-anchor="end" fill="${C_D}" font-size="${one ? 10 : 8}">${fmtB(avgOf(r[4]))}</text>`;
+  });
+  [['1K', 0], ['1M', .6], ['100M', 1]].forEach(([l, p]) => { g += `<text class="t" x="${16 + p * BARW}" y="62" style="text-anchor:${p === 0 ? 'start' : p === 1 ? 'end' : 'middle'}">${l}</text>`; });
+  return `<svg class="gauge" width="206" height="66" viewBox="0 0 200 64">${g}</svg>`;
+}
+const netControls = () => `<div class="ctl"><span class="seg">${[['both', '↓↑', 'Скачивание и отправка'], ['rx', '↓', 'Только скачивание'], ['tx', '↑', 'Только отправка']].map(([v, t, h]) => `<button data-ch="${v}" title="${h}" class="${gCh === v ? 'on' : ''}">${t}</button>`).join('')}</span><span class="seg">${[['dial', '◔', 'Стрелка'], ['graph', '⌇', 'График'], ['bars', '▤', 'Полосы']].map(([v, t, h]) => `<button data-gs="${v}" title="${h}" class="${gStyle === v ? 'on' : ''}">${t}</button>`).join('')}</span></div>`;
 const fmtTok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
 const fmtIn = ms => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? Math.floor(m / 60) + 'ч ' + (m % 60) + 'м' : m + 'м'; };
 const tokBar = (v, max) => { const p = Math.min(100, v / max * 100); return `<div class="bar" style="margin:1px 0 5px"><span style="width:${p}%;background:${col(p, { warn: 80, crit: 95 })}"></span></div>`; };
@@ -140,10 +184,14 @@ function render(d) {
   const { stats: s, level, worst, analysis: a, cfg, usage: us } = d, c = cfg;
   const m = metric('CPU', s.cpu, c) + metric('RAM', s.ram, c) + metric('GPU', s.gpu, c) + metric('Диск', s.disk, { warn: 85, crit: 95 });
   if (view === 'widget') {
-    $('#app').innerHTML = `<div class="card l${level}" id="w"><div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${gaugeSvg(prevD, prevU)}</div>`;
-    const dd = posOf(avg('rx', s.rx, s.tx)) * 180, uu = posOf(samples.reduce((a, x) => a + x.tx, 0) / samples.length) * 180;
-    const nd = $('#nd'); nd.getBoundingClientRect(); nd.style.transform = `rotate(${dd}deg)`; $('#nu').style.transform = `rotate(${uu}deg)`;
-    prevD = dd; prevU = uu;
+    pushSample(s.rx, s.tx);
+    const pd = posOf(avgOf('rx')), pu = posOf(avgOf('tx'));
+    const ind = gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : dialSvg(prevD, prevU);
+    $('#app').innerHTML = `<div class="card l${level}" id="w"><div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls()}</div>`;
+    const anim = (el, fn) => { if (el) { el.getBoundingClientRect(); fn(el); } };   // reflow first so the CSS transition runs from the previous value
+    if (gStyle === 'dial') { anim($('#nd'), e => { e.style.transform = `rotate(${pd * 180}deg)`; }); anim($('#nu'), e => { e.style.transform = `rotate(${pu * 180}deg)`; }); }
+    if (gStyle === 'bars') { anim($('#bd'), e => { e.style.width = pd * BARW + 'px'; }); anim($('#bu'), e => { e.style.width = pu * BARW + 'px'; }); }
+    prevD = pd * 180; prevU = pu * 180; prevBD = pd; prevBU = pu;
     return;
   }
   const sus = a ? a.suspects : [];
@@ -172,15 +220,19 @@ function render(d) {
 
 if (view === 'widget') {
   document.addEventListener('contextmenu', e => { e.preventDefault(); api.widgetMenu(); });
-  document.addEventListener('dblclick', () => api.openPanel());
+  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl')) api.openPanel(); });
   // drag the widget by any point (JS-based so right-click and double-click keep working)
   let dragging = false;
-  document.addEventListener('pointerdown', e => { if (e.button !== 0) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
+  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
   document.addEventListener('pointermove', e => { if (dragging) api.drag('move', e.screenX, e.screenY); });
   const end = e => { if (dragging) { dragging = false; api.drag('end', e.screenX, e.screenY); } };
   document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
 }
 document.addEventListener('click', async e => {
+  const chb = e.target.closest('button[data-ch]');
+  if (chb) { gCh = chb.dataset.ch; lsSet('pcm.ch', gCh); if (lastD) render(lastD); return; }
+  const gsb = e.target.closest('button[data-gs]');
+  if (gsb) { gStyle = gsb.dataset.gs; lsSet('pcm.style', gStyle); if (lastD) render(lastD); return; }
   const sv = e.target.closest('button[data-keysave]');
   if (sv) { const p = sv.dataset.keysave, inp = document.querySelector(`input[data-keyin="${p}"]`); const key = inp ? inp.value : ''; if (inp) inp.value = ''; sv.disabled = true; const r = await api.setKey(p, key); keyMsg = r.msg; setTimeout(() => { keyMsg = ''; }, 10000); if (lastD) render(lastD); return; }
   const cl = e.target.closest('button[data-keyclear]');

@@ -106,7 +106,7 @@ function scanLoop() { // 6s while panel is open, otherwise once a minute
 const webPrefs = { preload: path.join(__dirname, 'src', 'preload.js'), contextIsolation: true, sandbox: true, spellcheck: false };
 function createWidget() {
   const pos = cfg.widgetPos || (() => { const a = screen.getPrimaryDisplay().workArea; return { x: a.x + a.width - 250, y: a.y + 20 }; })();
-  widget = new BrowserWindow({ width: 230, height: 214, x: pos.x, y: pos.y, frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, webPreferences: webPrefs });
+  widget = new BrowserWindow({ width: 230, height: 234, x: pos.x, y: pos.y, frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, webPreferences: webPrefs });
   widget.setAlwaysOnTop(true, 'screen-saver');   // stay above the taskbar and other topmost windows
   widget.loadFile(path.join(__dirname, 'src', 'index.html'), { query: { view: 'widget' } });
   widget.webContents.on('render-process-gone', () => { if (widget && !widget.isDestroyed()) widget.reload(); });
