@@ -82,7 +82,7 @@ const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { r
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 let gStyle = lsGet('pcm.style', 'dial'), gCh = lsGet('pcm.ch', 'both');
 const samples = [], hist = [];
-let prevD = 0, prevU = 0, prevBD = 0, prevBU = 0, lastSeq = null;
+let prevD = 0, prevU = 0, prevBD = 0, prevBU = 0, lastSeq = null, lastH = 0;
 const C_D = '#e8eaf0', C_U = '#6aa3ff', BARW = 130;
 function pushSample(rx, tx) { const now = Date.now(); samples.push({ t: now, rx, tx }); while (samples[0].t < now - 4500) samples.shift(); hist.push({ rx, tx }); if (hist.length > 90) hist.shift(); }
 const avgOf = k => samples.reduce((a, x) => a + x[k], 0) / samples.length;
@@ -249,6 +249,9 @@ function render(d) {
     if (!sv && gStyle === 'dial') { anim($('#nd'), e => { e.style.transform = `rotate(${pd * 180}deg)`; }); anim($('#nu'), e => { e.style.transform = `rotate(${pu * 180}deg)`; }); }
     if (!sv && gStyle === 'bars') { anim($('#bd'), e => { e.style.width = pd * BARW + 'px'; }); anim($('#bu'), e => { e.style.width = pu * BARW + 'px'; }); }
     prevD = pd * 180; prevU = pu * 180; prevBD = pd; prevBU = pu;
+    // fit the window to the content so no mode (dial, graph, speed test...) can clip the bottom row
+    const card = $('#w'); card.style.height = 'auto'; const need = Math.ceil(card.offsetHeight) + 2; card.style.height = '';
+    if (need !== lastH) { lastH = need; api.widgetSize(need); }
     return;
   }
   const sus = a ? a.suspects : [];

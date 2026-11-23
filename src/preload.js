@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   setKey: (provider, key) => ipcRenderer.invoke('key-set', { provider, key }),
   clearKey: provider => ipcRenderer.invoke('key-clear', { provider }),
   refreshSpend: () => ipcRenderer.invoke('spend-refresh'),
+  widgetSize: h => ipcRenderer.send('widget-size', h),
   speedStart: () => ipcRenderer.invoke('speedtest-start'),
   unloadModel: p => ipcRenderer.invoke('unload-model', p),
   openPanel: () => ipcRenderer.send('open-panel'),

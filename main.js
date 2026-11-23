@@ -210,6 +210,15 @@ async function startSpeedTest() {
   } finally { speed.running = false; speed.phase = null; speed.live = null; broadcast(); }
 }
 ipcMain.handle('speedtest-start', () => { startSpeedTest(); return { ok: true }; });
+ipcMain.on('widget-size', (_e, h) => {
+  if (!widget || widget.isDestroyed() || !Number.isFinite(h)) return;
+  h = Math.max(150, Math.min(420, Math.round(h)));
+  const b = widget.getBounds(), wa = screen.getDisplayMatching(b).workArea;
+  if (b.height === h) return;
+  const y = Math.max(wa.y, Math.min(b.y, wa.y + wa.height - h));   // keep the grown window on screen
+  widget.setBounds({ x: b.x, y, width: b.width, height: h });
+  if (dragOff) dragOff.h = h;
+});
 ipcMain.on('open-panel', togglePanel);
 ipcMain.on('close-panel', () => panel && !panel.isDestroyed() && panel.close());
 ipcMain.on('widget-menu', () => Menu.buildFromTemplate([
