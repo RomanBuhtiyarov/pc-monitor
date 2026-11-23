@@ -19,7 +19,8 @@ html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px
 .gauge{display:block;margin:0 auto}
 .gauge .t{fill:var(--mut);font-size:7px;text-anchor:middle}
 #nd,#nu{transition:transform 1.2s cubic-bezier(.2,.8,.2,1)}
-.ctl{display:flex;justify-content:space-between;margin-top:-1px}
+.ctl{display:flex;flex-wrap:nowrap;gap:3px;justify-content:space-between;margin-top:-1px;height:18px;white-space:nowrap}
+.ctl button{white-space:nowrap}
 .seg{display:inline-flex;gap:2px}
 .seg button{background:rgba(255,255,255,.07);color:var(--mut);padding:1px 7px;border-radius:5px;font-size:10px;line-height:1.3}
 .seg button:hover{background:rgba(255,255,255,.15)}
@@ -162,7 +163,7 @@ function speedView(st) {
 }
 // leave the speed-test view (also used when the user picks another indicator style/channel)
 function closeSpeed() { const st = lastD && lastD.speedtest; if (st && !st.running) { dismissedAt = st.result ? st.result.at : 0; reportOpen = false; } }
-const speedControls = st => `<span class="mid"><button class="tst ${st.running ? 'run' : ''}" data-speed="1" ${st.running ? 'disabled' : ''} title="Тест скорости интернета (пинг, скачивание, отправка)">${st.running ? '⏳ Идёт…' : '⚡ Тест'}</button><button class="rep ${reportOpen ? 'on' : ''}" data-report="1" ${st.result ? '' : 'disabled'} title="Отчёт последнего теста">📋</button></span>`;
+const speedControls = st => `<span class="mid"><button class="tst ${st.running ? 'run' : ''}" data-speed="1" ${st.running ? 'disabled' : ''} title="Тест скорости интернета (пинг, скачивание, отправка)">${st.running ? '⏳ Тест' : '⚡ Тест'}</button><button class="rep ${reportOpen ? 'on' : ''}" data-report="1" ${st.result ? '' : 'disabled'} title="Отчёт последнего теста">📋</button></span>`;
 const HIST_TIME = t => new Date(t).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 function speedBlock(st) {
   st = st || {};
