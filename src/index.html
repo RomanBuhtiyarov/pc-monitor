@@ -160,6 +160,8 @@ function speedView(st) {
   ${miniDial(50, 'sd', prevSD, C_D, '↓ Чтение', m.down == null ? '—' : fmtMb(m.down) + ' Мбит/с', m.dDim)}${miniDial(150, 'su', prevSU, C_U, '↑ Передача', m.up == null ? '—' : fmtMb(m.up) + ' Мбит/с', m.uDim)}</svg>`;
   return { html, tgtD, tgtU };
 }
+// leave the speed-test view (also used when the user picks another indicator style/channel)
+function closeSpeed() { const st = lastD && lastD.speedtest; if (st && !st.running) { dismissedAt = st.result ? st.result.at : 0; reportOpen = false; } }
 const speedControls = st => `<span class="mid"><button class="tst ${st.running ? 'run' : ''}" data-speed="1" ${st.running ? 'disabled' : ''} title="Тест скорости интернета (пинг, скачивание, отправка)">${st.running ? '⏳ Идёт…' : '⚡ Тест'}</button><button class="rep ${reportOpen ? 'on' : ''}" data-report="1" ${st.result ? '' : 'disabled'} title="Отчёт последнего теста">📋</button></span>`;
 const HIST_TIME = t => new Date(t).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 function speedBlock(st) {
@@ -288,9 +290,9 @@ document.addEventListener('click', async e => {
   if (e.target.closest('button[data-report]')) { reportOpen = !reportOpen; if (reportOpen) dismissedAt = 0; if (lastD) render(lastD); return; }
   if (e.target.closest('[data-dismiss]')) { const st = lastD && lastD.speedtest; if (st && !st.running) { dismissedAt = st.result ? st.result.at : 0; reportOpen = false; if (lastD) render(lastD); } return; }
   const chb = e.target.closest('button[data-ch]');
-  if (chb) { gCh = chb.dataset.ch; lsSet('pcm.ch', gCh); if (lastD) render(lastD); return; }
+  if (chb) { gCh = chb.dataset.ch; lsSet('pcm.ch', gCh); closeSpeed(); if (lastD) render(lastD); return; }
   const gsb = e.target.closest('button[data-gs]');
-  if (gsb) { gStyle = gsb.dataset.gs; lsSet('pcm.style', gStyle); if (lastD) render(lastD); return; }
+  if (gsb) { gStyle = gsb.dataset.gs; lsSet('pcm.style', gStyle); closeSpeed(); if (lastD) render(lastD); return; }
   const sv = e.target.closest('button[data-keysave]');
   if (sv) { const p = sv.dataset.keysave, inp = document.querySelector(`input[data-keyin="${p}"]`); const key = inp ? inp.value : ''; if (inp) inp.value = ''; sv.disabled = true; const r = await api.setKey(p, key); keyMsg = r.msg; setTimeout(() => { keyMsg = ''; }, 10000); if (lastD) render(lastD); return; }
   const cl = e.target.closest('button[data-keyclear]');
