@@ -31,7 +31,8 @@
         "portable",
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "signExecutable": false,
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": true,

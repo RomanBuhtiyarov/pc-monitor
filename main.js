@@ -5,6 +5,7 @@ const si = require('systeminformation');
 const { scan } = require('./src/procs');
 const usage = require('./src/usage');
 const providers = require('./src/providers');
+const speedtest = require('./src/speedtest');
 
 app.disableHardwareAcceleration();           // fewer GPU-process resources
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=64');
@@ -17,6 +18,8 @@ const saveCfg = () => { try { fs.writeFileSync(cfgFile, JSON.stringify(cfg, null
 
 let tray, widget, panel;
 let stats = { cpu: 0, ram: 0, ramUsedGB: 0, ramTotalGB: 0, disk: 0, gpu: null, rx: 0, tx: 0 };
+let statsSeq = 0;
+const speed = { running: false, phase: null, live: null, partial: {}, result: null, history: [] };
 let analysis = null, level = 0, worst = { name: 'CPU', v: 0 };
 let scanning = false, lastScan = 0, lastNotify = 0, prevLevel = 0, killing = false;
 
@@ -68,7 +71,7 @@ function maybeNotify() {
   new Notification({ title: `Перегрузка: ${worst.name} ${worst.v.toFixed(0)}%`, body: t ? `Больше всего памяти: ${t.name} (${t.memMB} МБ)${t.project ? ' — ' + t.project : ''}. Откройте PC Monitor.` : 'Откройте PC Monitor, чтобы увидеть детали.' }).show();
 }
 const visible = w => w && !w.isDestroyed() && w.isVisible();
-const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets } }); };
+const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets } }); };
 
 async function fastTick() {
   try {
@@ -76,7 +79,7 @@ async function fastTick() {
     stats.cpu = l.currentLoad; stats.ram = (m.total - m.available) / m.total * 100;
     stats.ramUsedGB = (m.total - m.available) / 2 ** 30; stats.ramTotalGB = m.total / 2 ** 30;
     stats.rx = n.reduce((a, x) => a + (x.rx_sec || 0), 0); stats.tx = n.reduce((a, x) => a + (x.tx_sec || 0), 0);
-    prevLevel = level; evaluate(); updateTray(); maybeNotify(); broadcast();
+    statsSeq++; prevLevel = level; evaluate(); updateTray(); maybeNotify(); broadcast();
   } catch {}
   setTimeout(fastTick, visible(widget) || visible(panel) ? 2000 : 5000);
 }
@@ -106,7 +109,7 @@ function scanLoop() { // 6s while panel is open, otherwise once a minute
 const webPrefs = { preload: path.join(__dirname, 'src', 'preload.js'), contextIsolation: true, sandbox: true, spellcheck: false };
 function createWidget() {
   const pos = cfg.widgetPos || (() => { const a = screen.getPrimaryDisplay().workArea; return { x: a.x + a.width - 250, y: a.y + 20 }; })();
-  widget = new BrowserWindow({ width: 230, height: 234, x: pos.x, y: pos.y, frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, webPreferences: webPrefs });
+  widget = new BrowserWindow({ width: 244, height: 234, x: pos.x, y: pos.y, frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, webPreferences: webPrefs });
   widget.setAlwaysOnTop(true, 'screen-saver');   // stay above the taskbar and other topmost windows
   widget.loadFile(path.join(__dirname, 'src', 'index.html'), { query: { view: 'widget' } });
   widget.webContents.on('render-process-gone', () => { if (widget && !widget.isDestroyed()) widget.reload(); });
@@ -189,6 +192,24 @@ ipcMain.handle('unload-model', async (_e, { runtime, model }) => {
 ipcMain.handle('key-set', async (_e, { provider, key }) => { const r = providers.setKey(provider, key); if (r.ok) providers.refresh(true).then(broadcast).catch(() => {}); broadcast(); return r; });
 ipcMain.handle('key-clear', async (_e, { provider }) => { const r = providers.clearKey(provider); broadcast(); return r; });
 ipcMain.handle('spend-refresh', async () => { await providers.refresh(true); broadcast(); return { ok: true }; });
+let speedFile = null;
+async function startSpeedTest() {
+  if (speed.running) return;
+  Object.assign(speed, { running: true, phase: 'ping', live: null, partial: {}, result: null });
+  broadcast();
+  try {
+    const r = await speedtest.run(p => {
+      speed.phase = p.phase; speed.live = p.live == null ? null : p.live;
+      for (const k of ['pingMs', 'jitterMs', 'down']) if (p[k] != null) speed.partial[k] = p[k];
+      broadcast();
+    });
+    speed.result = r; speed.history = [r, ...speed.history].slice(0, 10);
+    try { fs.writeFileSync(speedFile, JSON.stringify(speed.history)); } catch {}
+  } catch (e) {
+    speed.result = { at: Date.now(), error: 'Нет связи с speed.cloudflare.com — проверьте подключение' };
+  } finally { speed.running = false; speed.phase = null; speed.live = null; broadcast(); }
+}
+ipcMain.handle('speedtest-start', () => { startSpeedTest(); return { ok: true }; });
 ipcMain.on('open-panel', togglePanel);
 ipcMain.on('close-panel', () => panel && !panel.isDestroyed() && panel.close());
 ipcMain.on('widget-menu', () => Menu.buildFromTemplate([
@@ -208,6 +229,8 @@ app.whenReady().then(() => {
   usage.init(app.getPath('userData'));
   const usageLoop = () => usage.refresh().then(broadcast).catch(() => {}).finally(() => setTimeout(usageLoop, visible(panel) ? 30000 : 300000));
   setTimeout(usageLoop, 10000);
+  speedFile = path.join(app.getPath('userData'), 'speedtests.json');
+  try { speed.history = JSON.parse(fs.readFileSync(speedFile, 'utf8')).slice(0, 10); speed.result = speed.history[0] || null; } catch {}
   providers.init(app.getPath('userData'));
   const spendLoop = () => providers.refresh(false).then(broadcast).catch(() => {}).finally(() => setTimeout(spendLoop, visible(panel) ? 5 * 60e3 : 30 * 60e3));
   setTimeout(spendLoop, 15000);   // first full pass of the logs runs in the background shortly after start

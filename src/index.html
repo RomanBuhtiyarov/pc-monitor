@@ -24,6 +24,14 @@ html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px
 .seg button{background:rgba(255,255,255,.07);color:var(--mut);padding:1px 7px;border-radius:5px;font-size:10px;line-height:1.3}
 .seg button:hover{background:rgba(255,255,255,.15)}
 .seg button.on{background:rgba(106,163,255,.28);color:var(--fg)}
+.res{height:66px;cursor:pointer}
+.ctl .tst,.ctl .rep{background:rgba(255,255,255,.08);color:var(--fg);padding:1px 7px;border-radius:5px;font-size:10px;line-height:1.3}
+.ctl .tst:hover,.ctl .rep:hover{background:rgba(255,255,255,.18)}
+.ctl .tst.run{color:#facc15}
+.ctl .rep.on{background:rgba(106,163,255,.28)}
+.ctl .rep[disabled]{opacity:.35;pointer-events:none}
+.ctl .mid{display:inline-flex;gap:3px}
+.seg button{padding:1px 6px}
 .widget .card{cursor:grab}.widget .hd{-webkit-app-region:no-drag}
 /* panel */
 .panel .card{padding:14px;gap:10px}
@@ -73,7 +81,7 @@ const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { r
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 let gStyle = lsGet('pcm.style', 'dial'), gCh = lsGet('pcm.ch', 'both');
 const samples = [], hist = [];
-let prevD = 0, prevU = 0, prevBD = 0, prevBU = 0;
+let prevD = 0, prevU = 0, prevBD = 0, prevBU = 0, lastSeq = null;
 const C_D = '#e8eaf0', C_U = '#6aa3ff', BARW = 130;
 function pushSample(rx, tx) { const now = Date.now(); samples.push({ t: now, rx, tx }); while (samples[0].t < now - 4500) samples.shift(); hist.push({ rx, tx }); if (hist.length > 90) hist.shift(); }
 const avgOf = k => samples.reduce((a, x) => a + x[k], 0) / samples.length;
@@ -120,7 +128,49 @@ function barsSvg(bd, bu) {
   [['1K', 0], ['1M', .6], ['100M', 1]].forEach(([l, p]) => { g += `<text class="t" x="${16 + p * BARW}" y="62" style="text-anchor:${p === 0 ? 'start' : p === 1 ? 'end' : 'middle'}">${l}</text>`; });
   return `<svg class="gauge" width="206" height="66" viewBox="0 0 200 64">${g}</svg>`;
 }
-const netControls = () => `<div class="ctl"><span class="seg">${[['both', '↓↑', 'Скачивание и отправка'], ['rx', '↓', 'Только скачивание'], ['tx', '↑', 'Только отправка']].map(([v, t, h]) => `<button data-ch="${v}" title="${h}" class="${gCh === v ? 'on' : ''}">${t}</button>`).join('')}</span><span class="seg">${[['dial', '◔', 'Стрелка'], ['graph', '⌇', 'График'], ['bars', '▤', 'Полосы']].map(([v, t, h]) => `<button data-gs="${v}" title="${h}" class="${gStyle === v ? 'on' : ''}">${t}</button>`).join('')}</span></div>`;
+const netControls = st => `<div class="ctl"><span class="seg">${[['both', '↓↑', 'Скачивание и отправка'], ['rx', '↓', 'Только скачивание'], ['tx', '↑', 'Только отправка']].map(([v, t, h]) => `<button data-ch="${v}" title="${h}" class="${gCh === v ? 'on' : ''}">${t}</button>`).join('')}</span>${speedControls(st)}<span class="seg">${[['dial', '◔', 'Стрелка'], ['graph', '⌇', 'График'], ['bars', '▤', 'Полосы']].map(([v, t, h]) => `<button data-gs="${v}" title="${h}" class="${gStyle === v ? 'on' : ''}">${t}</button>`).join('')}</span></div>`;
+// ---- internet speed test: two analog dials (download = "чтение", upload = "передача"), stage by stage ----
+let reportOpen = false, dismissedAt = 0, prevSD = 0, prevSU = 0;
+const posM = v => Math.max(0, Math.min(1, Math.log10(Math.max(v || 0, 1)) / 3));   // 1 .. 1000 Mbit/s, log scale
+const fmtMb = v => v == null ? '—' : (v >= 100 ? String(Math.round(v)) : v.toFixed(1).replace('.', ','));
+const ptc = (cx, cy, r, p) => { const a = Math.PI * (1 - p); return [cx + r * Math.cos(a), cy - r * Math.sin(a)]; };
+function miniDial(cx, id, deg, color, title, val, dim) {
+  const cy = 50, r = 29, [x1, y1] = ptc(cx, cy, r, 0), [x2, y2] = ptc(cx, cy, r, 1);
+  let ticks = '';
+  [[0, '1'], [1 / 3, '10'], [2 / 3, '100'], [1, '1000']].forEach(([p, l]) => { const [a, b] = ptc(cx, cy, r - 1, p), [c, d] = ptc(cx, cy, r + 4, p), [tx, ty] = ptc(cx, cy, r + 9, p); ticks += `<line x1="${a}" y1="${b}" x2="${c}" y2="${d}" stroke="#8b91a0" stroke-width=".8"/><text class="t" style="font-size:5.5px" x="${tx}" y="${ty + 2}">${l}</text>`; });
+  return `<g opacity="${dim ? .35 : 1}"><text x="${cx}" y="19" text-anchor="middle" font-size="7.5" fill="${color}">${title}</text>
+  <path d="M${x1} ${y1} A${r} ${r} 0 0 1 ${x2} ${y2}" stroke="${color}" stroke-width="3.5" fill="none" stroke-linecap="round" opacity=".35"/>${ticks}
+  <g id="${id}" style="transform-origin:${cx}px ${cy}px;transform:rotate(${deg}deg);transition:transform 1s cubic-bezier(.2,.8,.2,1)"><line x1="${cx}" y1="${cy}" x2="${cx - 25}" y2="${cy}" stroke="${color}" stroke-width="1.8" stroke-linecap="round"/></g>
+  <circle cx="${cx}" cy="${cy}" r="3" fill="${color}"/><text x="${cx}" y="62" text-anchor="middle" font-size="8.5" fill="${C_D}">${val}</text></g>`;
+}
+function speedModel(st) {
+  const r = st.result || {}, p = st.partial || {};
+  let down = null, up = null, stage = '', dDim = false, uDim = false;
+  if (st.running) {
+    if (st.phase === 'ping') { stage = 'Этап 1/3 · Пинг…'; dDim = uDim = true; }
+    else if (st.phase === 'down') { stage = `Этап 2/3 · Чтение (скачивание) · пинг ${p.pingMs} мс`; down = st.live; uDim = true; }
+    else { stage = 'Этап 3/3 · Передача (отправка)'; down = p.down; up = st.live; }
+  } else if (r.error) { stage = r.error; dDim = uDim = true; }
+  else { stage = `Готово · пинг ${r.pingMs} мс · джиттер ${r.jitterMs} мс`; down = r.down; up = r.up; }
+  return { down, up, stage, dDim, uDim };
+}
+function speedView(st) {
+  const m = speedModel(st), tgtD = posM(m.down) * 180, tgtU = posM(m.up) * 180;
+  const html = `<svg class="gauge" width="212" height="66" viewBox="0 0 200 64"><text x="100" y="8" text-anchor="middle" font-size="7.5" fill="#8b91a0">${esc(m.stage)}</text>
+  ${miniDial(50, 'sd', prevSD, C_D, '↓ Чтение', m.down == null ? '—' : fmtMb(m.down) + ' Мбит/с', m.dDim)}${miniDial(150, 'su', prevSU, C_U, '↑ Передача', m.up == null ? '—' : fmtMb(m.up) + ' Мбит/с', m.uDim)}</svg>`;
+  return { html, tgtD, tgtU };
+}
+const speedControls = st => `<span class="mid"><button class="tst ${st.running ? 'run' : ''}" data-speed="1" ${st.running ? 'disabled' : ''} title="Тест скорости интернета (пинг, скачивание, отправка)">${st.running ? '⏳ Идёт…' : '⚡ Тест'}</button><button class="rep ${reportOpen ? 'on' : ''}" data-report="1" ${st.result ? '' : 'disabled'} title="Отчёт последнего теста">📋</button></span>`;
+const HIST_TIME = t => new Date(t).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function speedBlock(st) {
+  st = st || {};
+  const m = speedModel(st), r = st.result;
+  let h = '<h4>Тест интернета</h4><div class="grp">';
+  h += `<div class="ss"><span class="nm" style="white-space:normal">${st.running ? esc(m.stage) + (st.live != null ? ' · ' + fmtMb(st.live) + ' Мбит/с' : '') : r && !r.error ? `Последний: ↓ ${fmtMb(r.down)} · ↑ ${fmtMb(r.up)} Мбит/с · пинг ${r.pingMs} мс` : r && r.error ? esc(r.error) : 'Измерить пинг, скачивание и отправку'}</span><button class="ok" data-speed="1" ${st.running ? 'disabled' : ''}>${st.running ? '…' : '⚡ Запустить'}</button></div>`;
+  h += (st.history || []).filter(x => !x.error).slice(0, 5).map(x => `<div class="ss"><span class="nm" style="color:var(--mut)">${HIST_TIME(x.at)}</span><span class="v">↓ ${fmtMb(x.down)} · ↑ ${fmtMb(x.up)} Мбит/с · ${x.pingMs} мс</span></div>`).join('');
+  h += '<div class="ss"><span class="nm" style="color:var(--mut);white-space:normal">Тест идёт через speed.cloudflare.com и расходует до ~150 МБ трафика.</span></div></div>';
+  return h;
+}
 const fmtTok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
 const fmtIn = ms => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? Math.floor(m / 60) + 'ч ' + (m % 60) + 'м' : m + 'м'; };
 const tokBar = (v, max) => { const p = Math.min(100, v / max * 100); return `<div class="bar" style="margin:1px 0 5px"><span style="width:${p}%;background:${col(p, { warn: 80, crit: 95 })}"></span></div>`; };
@@ -184,13 +234,17 @@ function render(d) {
   const { stats: s, level, worst, analysis: a, cfg, usage: us } = d, c = cfg;
   const m = metric('CPU', s.cpu, c) + metric('RAM', s.ram, c) + metric('GPU', s.gpu, c) + metric('Диск', s.disk, { warn: 85, crit: 95 });
   if (view === 'widget') {
-    pushSample(s.rx, s.tx);
+    if (d.seq !== lastSeq) { pushSample(s.rx, s.tx); lastSeq = d.seq; }
+    const st = d.speedtest || {};
+    const showSpeed = st.running || (st.result && ((reportOpen) || (st.result.at !== dismissedAt && Date.now() - st.result.at < 25000)));
+    const sv = showSpeed ? speedView(st) : null;
     const pd = posOf(avgOf('rx')), pu = posOf(avgOf('tx'));
-    const ind = gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : dialSvg(prevD, prevU);
-    $('#app').innerHTML = `<div class="card l${level}" id="w"><div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls()}</div>`;
+    const ind = sv ? `<div class="res" data-dismiss="1">${sv.html}</div>` : gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : dialSvg(prevD, prevU);
+    $('#app').innerHTML = `<div class="card l${level}" id="w"><div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}</div>`;
     const anim = (el, fn) => { if (el) { el.getBoundingClientRect(); fn(el); } };   // reflow first so the CSS transition runs from the previous value
-    if (gStyle === 'dial') { anim($('#nd'), e => { e.style.transform = `rotate(${pd * 180}deg)`; }); anim($('#nu'), e => { e.style.transform = `rotate(${pu * 180}deg)`; }); }
-    if (gStyle === 'bars') { anim($('#bd'), e => { e.style.width = pd * BARW + 'px'; }); anim($('#bu'), e => { e.style.width = pu * BARW + 'px'; }); }
+    if (sv) { anim($('#sd'), e => { e.style.transform = `rotate(${sv.tgtD}deg)`; }); anim($('#su'), e => { e.style.transform = `rotate(${sv.tgtU}deg)`; }); prevSD = sv.tgtD; prevSU = sv.tgtU; }
+    if (!sv && gStyle === 'dial') { anim($('#nd'), e => { e.style.transform = `rotate(${pd * 180}deg)`; }); anim($('#nu'), e => { e.style.transform = `rotate(${pu * 180}deg)`; }); }
+    if (!sv && gStyle === 'bars') { anim($('#bd'), e => { e.style.width = pd * BARW + 'px'; }); anim($('#bu'), e => { e.style.width = pu * BARW + 'px'; }); }
     prevD = pd * 180; prevU = pu * 180; prevBD = pd; prevBU = pu;
     return;
   }
@@ -207,6 +261,7 @@ function render(d) {
     ${a.llm && (a.llm.tools.length || a.llm.local.length) ? `<h4>LLM: инструменты и модели</h4><div class="grp">
       ${a.llm.local.map(m => `<div class="ss"><span class="on"></span><span class="nm" title="${esc(m.model)}">${esc(m.runtime === 'ollama' ? 'Ollama' : 'LM Studio')} · ${esc(m.model)}</span><span class="v">${m.sizeMB ? fmtMem(m.sizeMB) + (m.vramMB ? ' (GPU ' + fmtMem(m.vramMB) + ')' : '') : 'загружена'}${m.expiresInMin != null ? ' · ещё ' + m.expiresInMin + 'м' : ''}</span>${m.runtime === 'ollama' ? `<button data-unload="${esc(m.model)}" data-rt="ollama">Выгрузить</button>` : ''}</div>`).join('')}
       ${a.llm.tools.map(t => `<div class="ss"><span class="nm">${esc(t.label)}<small style="color:var(--mut);margin-left:4px">${esc(t.kind)}</small></span><span class="v">${t.procs} проц. · ${fmtMem(t.memMB)} · ${t.cpu}% · ${fmtAge(t.ageMin)}</span></div>`).join('')}</div>` : ''}
+    ${speedBlock(d.speedtest)}
     ${usageBlock(us, c.budgets)}
     ${spendBlock(d.spend, d.keys, c.budgets)}
     <h4>Проекты и процессы</h4>
@@ -220,15 +275,18 @@ function render(d) {
 
 if (view === 'widget') {
   document.addEventListener('contextmenu', e => { e.preventDefault(); api.widgetMenu(); });
-  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl')) api.openPanel(); });
+  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl, .res')) api.openPanel(); });
   // drag the widget by any point (JS-based so right-click and double-click keep working)
   let dragging = false;
-  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
+  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl, .res')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
   document.addEventListener('pointermove', e => { if (dragging) api.drag('move', e.screenX, e.screenY); });
   const end = e => { if (dragging) { dragging = false; api.drag('end', e.screenX, e.screenY); } };
   document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
 }
 document.addEventListener('click', async e => {
+  if (e.target.closest('button[data-speed]')) { api.speedStart(); return; }
+  if (e.target.closest('button[data-report]')) { reportOpen = !reportOpen; if (reportOpen) dismissedAt = 0; if (lastD) render(lastD); return; }
+  if (e.target.closest('[data-dismiss]')) { const st = lastD && lastD.speedtest; if (st && !st.running) { dismissedAt = st.result ? st.result.at : 0; reportOpen = false; if (lastD) render(lastD); } return; }
   const chb = e.target.closest('button[data-ch]');
   if (chb) { gCh = chb.dataset.ch; lsSet('pcm.ch', gCh); if (lastD) render(lastD); return; }
   const gsb = e.target.closest('button[data-gs]');
