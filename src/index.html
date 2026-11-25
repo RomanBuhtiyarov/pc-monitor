@@ -34,6 +34,23 @@ html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px
 .ctl .mid{display:inline-flex;gap:3px}
 .seg button{padding:1px 6px}
 .widget .card{cursor:grab}.widget .hd{-webkit-app-region:no-drag}
+/* CPU scanner strip (persistent node, not re-rendered) */
+#wtop{display:flex;flex-direction:column;gap:7px}
+.scan{border-top:1px solid var(--line);padding-top:5px;display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--mut)}
+.sc-gr{position:relative;height:24px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.04)}
+.sc-gr svg{display:block;width:100%;height:100%}
+.sc-gr .beam{position:absolute;top:0;bottom:0;left:-12%;width:12%;background:linear-gradient(90deg,transparent,rgba(106,163,255,.55));border-right:1px solid rgba(160,200,255,.9);animation:sweep 3.6s steps(36) infinite}
+@keyframes sweep{from{left:-12%}to{left:100%}}
+.scan.fl .sc-gr{animation:flash .7s steps(7) 1}
+@keyframes flash{0%{box-shadow:inset 0 0 0 1px var(--acc),0 0 8px var(--acc)}100%{box-shadow:inset 0 0 0 1px transparent}}
+.sc-ft{display:flex;align-items:center;gap:6px;height:16px;white-space:nowrap}
+.sc-ft #scl{color:var(--fg);font-variant-numeric:tabular-nums;margin-right:auto}
+.sc-gr #scn{position:absolute;right:4px;top:1px;font-size:9px;color:var(--mut);text-shadow:0 0 3px #000}
+.sc-ft select{color-scheme:dark;font:inherit;font-size:10px;border:0;border-radius:5px;padding:1px 2px;background:#262a33;color:var(--fg);cursor:pointer}
+.hog{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:4px 6px;padding:4px 6px;border-radius:7px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--fg)}
+.hog .ht{flex:1 1 100%;min-width:0;line-height:1.3}.hog .ht b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hog .ht span{color:var(--mut)}
+.hog button{font-size:10px;padding:1px 6px;white-space:nowrap}
+.hog button.later{background:rgba(255,255,255,.08);color:var(--fg)}.hog button.later:hover{background:rgba(255,255,255,.18)}
 /* panel */
 .panel .card{padding:14px;gap:10px}
 .panel .hd{font-size:14px}.panel .x{margin-left:auto;cursor:pointer;color:var(--mut);padding:0 4px;-webkit-app-region:no-drag}
@@ -229,6 +246,44 @@ function spendBlock(sp, keys, bud) {
   h += `<div class="ss"><span class="nm" style="color:var(--mut);white-space:normal">${keyMsg ? esc(keyMsg) : 'Ключ хранится только на этом ПК в зашифрованном виде и уходит только на api.anthropic.com / api.openai.com. Админ-ключ создаётся в консоли организации; для работы нужна организация, а не личный аккаунт.'}</span></div><div class="ss"><button data-refreshspend="1">Обновить расход</button></div></details>`;
   return h;
 }
+// ---- CPU scanner strip: persistent node #scan (never rewritten by render, so <select> and animation survive) ----
+const cpuHist = [], HN = 60, SNOOZE_MS = 30 * 60000, snooze = new Map();
+let lastAnalysisAt = 0, hogKey = null;
+const fmtScan = s => s < 60 ? s + ' с' : s / 60 + ' мин';
+function buildWidget() {
+  $('#app').innerHTML = `<div class="card l0" id="w"><div id="wtop"></div><div class="scan" id="scan"><div class="sc-gr"><svg viewBox="0 0 200 24" preserveAspectRatio="none"><path id="sca" fill="none"/><path id="scp" fill="none" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg><div class="beam"></div><span id="scn"></span></div><div class="sc-ft"><span id="scl">CPU —</span><label title="Как часто проверять процессы">Проверка CPU <select id="scsel"></select></label></div><div id="hog"></div></div></div>`;
+  $('#scsel').addEventListener('change', e => api.setScanInterval(+e.target.value));
+  $('#hog').addEventListener('click', e => { const b = e.target.closest('button[data-later]'); if (b) { snooze.set(+b.dataset.later, Date.now() + SNOOZE_MS); hogKey = null; if (lastD) updateScan(lastD); } });
+}
+function updateScan(d) {
+  const { stats: s, analysis: a, cfg } = d, sel = $('#scsel'), sc = $('#scan');
+  if (d.seq !== cpuSeq) { cpuSeq = d.seq; cpuHist.push(s.cpu || 0); if (cpuHist.length > HN) cpuHist.shift(); }
+  const color = col(s.cpu || 0, cfg);
+  const pts = cpuHist.map((v, i) => [(HN - cpuHist.length + i) / (HN - 1) * 200, 22 - Math.min(100, v) / 100 * 20]);
+  if (pts.length > 1) {
+    const ln = pts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join('');
+    $('#scp').setAttribute('d', ln); $('#scp').setAttribute('stroke', color);
+    $('#sca').setAttribute('d', `${ln}L${pts[pts.length - 1][0].toFixed(1)} 24L${pts[0][0].toFixed(1)} 24Z`); $('#sca').setAttribute('fill', color); $('#sca').setAttribute('opacity', '.15');
+  }
+  $('#scl').textContent = 'CPU ' + Math.round(s.cpu || 0) + '%';
+  const steps = cfg.scanSteps || [];
+  if (sel.options.length !== steps.length) { sel.innerHTML = steps.map(v => `<option value="${v}">${fmtScan(v)}</option>`).join(''); }
+  if (document.activeElement !== sel) sel.value = String(cfg.scanSec);
+  if (a && a.at) {
+    const left = Math.round((a.at + cfg.scanSec * 1000 - Date.now()) / 1000);
+    $('#scn').textContent = left > 1 ? 'через ' + (left >= 60 ? Math.ceil(left / 60) + ' мин' : left + ' с') : 'проверка…';
+    if (a.at !== lastAnalysisAt) { if (lastAnalysisAt) { sc.classList.remove('fl'); sc.getBoundingClientRect(); sc.classList.add('fl'); } lastAnalysisAt = a.at; }
+  } else $('#scn').textContent = 'сканирую…';
+  const h = a && a.hog, now = Date.now();
+  const hide = !h || (snooze.get(h.pid) || 0) > now;
+  const mins = h ? Math.max(1, Math.round(h.heldMs / 60000)) : 0;
+  const key = hide ? '' : `${h.pid}|${h.name}|${Math.round(h.cpu)}|${mins}`;
+  if (key !== hogKey) {
+    hogKey = key;
+    $('#hog').innerHTML = hide ? '' : `<div class="hog"><div class="ht"><b title="${esc(h.name)}">${esc(h.name)} · CPU ${Math.round(h.cpu)}%</b><span>держит процессор уже ${mins} мин</span></div><button data-pid="${h.pid}" data-name="${esc(h.name)}" data-mem="${h.memMB}" data-cpu="${h.cpu}" data-proj="">Завершить</button><button class="later" data-later="${h.pid}">Позже</button></div>`;
+  }
+}
+let cpuSeq = null;
 const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];
 
 function render(d) {
@@ -243,7 +298,9 @@ function render(d) {
     const sv = showSpeed ? speedView(st) : null;
     const pd = posOf(avgOf('rx')), pu = posOf(avgOf('tx'));
     const ind = sv ? `<div class="res" data-dismiss="1">${sv.html}</div>` : gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : dialSvg(prevD, prevU);
-    $('#app').innerHTML = `<div class="card l${level}" id="w"><div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}</div>`;
+    $('#w').className = 'card l' + level;
+    $('#wtop').innerHTML = `<div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}`;
+    updateScan(d);
     const anim = (el, fn) => { if (el) { el.getBoundingClientRect(); fn(el); } };   // reflow first so the CSS transition runs from the previous value
     if (sv) { anim($('#sd'), e => { e.style.transform = `rotate(${sv.tgtD}deg)`; }); anim($('#su'), e => { e.style.transform = `rotate(${sv.tgtU}deg)`; }); prevSD = sv.tgtD; prevSU = sv.tgtU; }
     if (!sv && gStyle === 'dial') { anim($('#nd'), e => { e.style.transform = `rotate(${pd * 180}deg)`; }); anim($('#nu'), e => { e.style.transform = `rotate(${pu * 180}deg)`; }); }
@@ -280,11 +337,12 @@ function render(d) {
 }
 
 if (view === 'widget') {
+  buildWidget();
   document.addEventListener('contextmenu', e => { e.preventDefault(); api.widgetMenu(); });
-  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl, .res')) api.openPanel(); });
+  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl, .res, .scan')) api.openPanel(); });
   // drag the widget by any point (JS-based so right-click and double-click keep working)
   let dragging = false;
-  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl, .res')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
+  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl, .res, .scan')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
   document.addEventListener('pointermove', e => { if (dragging) api.drag('move', e.screenX, e.screenY); });
   const end = e => { if (dragging) { dragging = false; api.drag('end', e.screenX, e.screenY); } };
   document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
@@ -306,7 +364,7 @@ document.addEventListener('click', async e => {
   if (u) { u.disabled = true; const r = await api.unloadModel({ runtime: u.dataset.rt, model: u.dataset.unload }); u.textContent = r.ok ? '✓' : '!'; u.title = r.msg; return; }
   const b =e.target.closest('button[data-pid]'); if (!b) return;
   b.disabled = true;
-  const r = await api.kill({ pid: +b.dataset.pid, name: b.dataset.name, memMB: +b.dataset.mem, project: b.dataset.proj });
+  const r = await api.kill({ pid: +b.dataset.pid, name: b.dataset.name, memMB: +b.dataset.mem, project: b.dataset.proj, cpu: b.dataset.cpu ? +b.dataset.cpu : undefined });
   b.disabled = false; if (!r.ok) b.title = r.msg;
 });
 api.onStats(render);
