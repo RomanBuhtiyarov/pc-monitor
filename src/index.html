@@ -318,6 +318,8 @@ function focusStrip(f) {   // compact strip for the always-on-screen widget
   if (o.frogs) h += f.frogs.length
     ? f.frogs.map(x => `<div class="fr ${x.done ? 'dn' : ''}"><button class="ck" data-fz="frogToggle" data-id="${esc(x.id)}">${x.done ? '✓' : ''}</button><span title="${esc(x.t)}">🐸 ${esc(x.t)}</span></div>`).join('')
     : '<div class="fr mt">🐸 лягушки не выбраны</div>';
+  if (o.frogs && f.frogs.length < o.frogsMax) h += '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Лягушки дня">＋ добавить лягушку</button></div>';
+  if (o.habits && f.habits.some(b => b.word)) h += `<div class="fr"><span title="${esc(f.word.de)} — ${esc(f.word.ru)}">🇩🇪 <b>${esc(f.word.de)}</b> — ${esc(f.word.ru)}</span><button class="gh" data-fz="wordNext" data-id="" title="Другое слово">↻</button><button class="ok" data-fz="wordKnown" data-id="" title="Знаю — больше не показывать">✓</button></div>`;
   if (o.habits && f.habits.length) h += `<div class="hbs">${f.habits.map(b => `<button class="hbt ${b.doneToday ? 'dn' : ''}" data-fz="habitToggle" data-id="${esc(b.id)}" title="${esc(b.t)} · ${b.min} мин">${esc(b.t)} ${b.doneToday ? '✓' : b.streak ? '🔥' + b.streak : ''}</button>`).join('')}</div>`;
   if (f.rec.urgent) h += `<div class="ph urg" title="${esc(f.rec.text)}">${esc(f.rec.text)}</div>`;
   else if (o.phrase) h += `<div class="ph" title="${esc(f.phrase)}">${esc(f.phrase)}</div>`;
@@ -451,6 +453,7 @@ document.addEventListener('change', async e => {
 document.addEventListener('toggle', e => { if (e.target.matches && e.target.matches('details[data-k="focus"]')) fzOpen = e.target.open; }, true);
 async function focusClick(e) {
   const T = e.target.closest.bind(e.target);
+  if (T('button[data-openpanel]')) { api.openPanel(); return true; }
   if (T('button[data-fzon]')) { await api.focusSettings({ enabled: true }); return true; }
   const sv = T('button[data-fsetv]'); if (sv) { await api.focusSettings({ [sv.dataset.fsetv]: +sv.dataset.v }); return true; }
   const ed = T('button[data-fedit]'); if (ed) { fzEdit = ed.dataset.fedit; if (lastD) render(lastD); const i = document.querySelector('input[data-fi="edit"]'); if (i) { i.focus(); i.select(); } return true; }
