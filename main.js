@@ -6,13 +6,14 @@ const { scan, PROTECTED } = require('./src/procs');
 const usage = require('./src/usage');
 const providers = require('./src/providers');
 const speedtest = require('./src/speedtest');
+const focus = require('./src/focus');
 
 app.disableHardwareAcceleration();           // fewer GPU-process resources
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=64');
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('local.pcmonitor');
 
-const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true, scanSec: 60, hogCpu: 30, hogMinSec: 60, budgets: { claude5h: 0, claudeDay: 0, claudeWeek: 0, anthropicMonth: 0, openaiMonth: 0 } };
+const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true, scanSec: 60, hogCpu: 30, hogMinSec: 60, focus: { ...focus.OPT_DEFAULTS }, budgets: { claude5h: 0, claudeDay: 0, claudeWeek: 0, anthropicMonth: 0, openaiMonth: 0 } };
 let cfgFile, cfg = { ...DEFAULTS };
 const saveCfg = () => { try { fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2)); } catch {} };
 
@@ -73,7 +74,11 @@ function maybeNotify() {
   new Notification({ title: `Перегрузка: ${worst.name} ${worst.v.toFixed(0)}%`, body: t ? `Больше всего памяти: ${t.name} (${t.memMB} МБ)${t.project ? ' — ' + t.project : ''}. Откройте PC Monitor.` : 'Откройте PC Monitor, чтобы увидеть детали.' }).show();
 }
 const visible = w => w && !w.isDestroyed() && w.isVisible();
-const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
+function focusRemind() {   // once a day, only when something is urgent; no extra timers (rides on the metrics loop)
+  const t = focus.reminder(cfg); if (!t) return;
+  const n = new Notification({ title: 'Фокус', body: t }); n.on('click', () => { if (!panel || panel.isDestroyed()) togglePanel(); }); n.show();
+}
+const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), focus: focus.summary(cfg), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
 
 async function fastTick() {
   try {
@@ -81,7 +86,7 @@ async function fastTick() {
     stats.cpu = l.currentLoad; stats.ram = (m.total - m.available) / m.total * 100;
     stats.ramUsedGB = (m.total - m.available) / 2 ** 30; stats.ramTotalGB = m.total / 2 ** 30;
     stats.rx = n.reduce((a, x) => a + (x.rx_sec || 0), 0); stats.tx = n.reduce((a, x) => a + (x.tx_sec || 0), 0);
-    statsSeq++; prevLevel = level; evaluate(); updateTray(); maybeNotify(); broadcast();
+    statsSeq++; prevLevel = level; evaluate(); updateTray(); maybeNotify(); focusRemind(); broadcast();
   } catch {}
   setTimeout(fastTick, visible(widget) || visible(panel) ? 2000 : 5000);
 }
@@ -152,6 +157,7 @@ function buildMenu() {
     { label: 'Показать виджет', click: () => setWidget(true) },
     { label: 'Скрыть виджет', click: () => setWidget(false) },
     { label: 'Уведомления о перегрузке', type: 'checkbox', checked: cfg.notify, click: i => { cfg.notify = i.checked; saveCfg(); } },
+    { label: 'Блок «Фокус»', type: 'checkbox', checked: focus.opts(cfg).enabled, click: i => { cfg.focus = { ...focus.opts(cfg), enabled: i.checked }; saveCfg(); broadcast(); } },
     { label: 'Автозапуск с Windows', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: i => app.setLoginItemSettings({ openAtLogin: i.checked }) },
     { label: 'Открыть файл настроек (пороги)', click: () => shell.openPath(cfgFile) },
     { type: 'separator' },
@@ -225,6 +231,14 @@ ipcMain.handle('scan-interval', (_e, sec) => {
   cfg.scanSec = sec; saveCfg(); broadcast();
   return { ok: true };
 });
+ipcMain.handle('focus', (_e, { type, p } = {}) => { const r = focus.act(String(type), p, cfg); broadcast(); return r; });
+ipcMain.handle('focus-settings', (_e, p = {}) => {
+  const cur = focus.opts(cfg), n = { ...cur };
+  for (const k of ['enabled', 'frogs', 'habits', 'goals', 'phrase', 'notify']) if (typeof p[k] === 'boolean') n[k] = p[k];
+  if (p.frogsMax != null) n.frogsMax = p.frogsMax;
+  if (p.remindHour != null) n.remindHour = p.remindHour;
+  cfg.focus = focus.opts({ focus: n }); saveCfg(); broadcast(); return { ok: true };
+});
 ipcMain.on('open-panel', togglePanel);
 ipcMain.on('close-panel', () => panel && !panel.isDestroyed() && panel.close());
 ipcMain.on('widget-menu', () => Menu.buildFromTemplate([
@@ -241,7 +255,7 @@ app.whenReady().then(() => {
   for (const ev of ['unlock-screen', 'resume']) powerMonitor.on(ev, () => setTimeout(ensureWidget, 1500));
   for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(ev, () => setTimeout(ensureWidget, 1000));
   fastTick(); diskTick(); gpuTick(); scanTick(); setTimeout(scanLoop, 3000);
-  usage.init(app.getPath('userData'));
+  usage.init(app.getPath('userData')); focus.init(app.getPath('userData'));
   const usageLoop = () => usage.refresh().then(broadcast).catch(() => {}).finally(() => setTimeout(usageLoop, visible(panel) ? 30000 : 300000));
   setTimeout(usageLoop, 10000);
   speedFile = path.join(app.getPath('userData'), 'speedtests.json');

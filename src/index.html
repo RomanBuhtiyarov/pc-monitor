@@ -81,6 +81,25 @@ button:hover{background:rgba(239,68,68,.35)}
 .ss{display:flex;gap:8px;align-items:center;padding:2px 0}.ss .nm{flex:1}.ss .v{color:var(--mut)}
 .on{width:7px;height:7px;border-radius:50%;background:var(--ok)}.off{width:7px;height:7px;border-radius:50%;background:#555}
 .empty{color:var(--mut);padding:4px 0}
+/* Focus block */
+.fz{border-top:1px solid var(--line);padding-top:5px;display:flex;flex-direction:column;gap:3px;font-size:11px}
+.fr{display:flex;align-items:center;gap:6px;min-width:0}
+.fr>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fr.dn>span,.ss.dn .nm{color:var(--mut);text-decoration:line-through}
+.fr.mt{color:var(--mut)}
+button.ck{width:15px;height:15px;padding:0;border-radius:4px;background:rgba(255,255,255,.08);color:#8be3a8;border:1px solid var(--line);font-size:10px;line-height:1;flex:none}
+button.ck:hover{background:rgba(34,197,94,.3)}
+.dn button.ck{background:rgba(34,197,94,.3)}
+button.gh{background:rgba(255,255,255,.08);color:var(--fg)}button.gh:hover{background:rgba(255,255,255,.18)}
+.hbs{display:flex;flex-wrap:wrap;gap:3px}
+button.hbt{background:rgba(255,255,255,.07);color:var(--mut);font-size:10px;padding:1px 6px;border-radius:8px}
+button.hbt.dn{background:rgba(34,197,94,.2);color:#8be3a8}
+.ph{color:var(--mut);font-size:10px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ph.urg{color:#ffd27a}
+.wk{display:inline-flex;gap:2px}.wk i{width:6px;height:6px;border-radius:2px;background:rgba(255,255,255,.12)}.wk i.wd{background:var(--ok)}
+.fz-add{display:flex;gap:4px;margin-top:4px}
+.ss.nx .nm{color:var(--fg)}
+.seg button.sel{background:rgba(106,163,255,.28);color:var(--fg)}
 </style></head>
 <body><div id="app"></div>
 <script>
@@ -284,11 +303,73 @@ function updateScan(d) {
   }
 }
 let cpuSeq = null;
+// ---- Focus block: frogs of the day, habits (German...), goals with subtasks, motivation ----
+let fzMsg = '', fzOpen = true, fzArm = '', fzMsgT = 0, fzArmT = 0;
+const fzb = (type, id, txt, cls = '', extra = '') => `<button class="${cls}" data-fz="${type}" data-id="${esc(id)}" ${extra}>${txt}</button>`;
+const fzDel = (type, id, extra = '') => fzb(type, id, fzArm === type + id ? 'Удалить?' : '✕', '', extra);
+let fzEdit = '';
+const fzEd = (kind, id, text, o = {}) => fzEdit === kind + ':' + id
+  ? `<input data-fi="edit" maxlength="120" value="${esc(text)}">${o.min != null ? `<input data-fi="editmin" type="number" min="1" max="240" value="${o.min}" style="flex:0 0 46px" title="минут в день">` : ''}<button class="ok" data-fsave="${kind}:${id}" ${o.goal ? `data-goal="${esc(o.goal)}"` : ''}>✓</button>`
+  : `<span class="nm" style="white-space:normal">${o.html || esc(text)}</span><button class="gh" data-fedit="${kind}:${id}" title="Изменить">✎</button>`;
+const addRow = (key, ph, type, extra = '') => `<div class="fz-add"><input data-fi="${key}" maxlength="120" placeholder="${ph}"><button class="ok" data-fadd="${type}" data-fkey="${key}" ${extra}>+</button></div>`;
+function focusStrip(f) {   // compact strip for the always-on-screen widget
+  if (!f || !f.enabled) return '';
+  const o = f.opts; let h = '';
+  if (o.frogs) h += f.frogs.length
+    ? f.frogs.map(x => `<div class="fr ${x.done ? 'dn' : ''}"><button class="ck" data-fz="frogToggle" data-id="${esc(x.id)}">${x.done ? '✓' : ''}</button><span title="${esc(x.t)}">🐸 ${esc(x.t)}</span></div>`).join('')
+    : '<div class="fr mt">🐸 лягушки не выбраны</div>';
+  if (o.habits && f.habits.length) h += `<div class="hbs">${f.habits.map(b => `<button class="hbt ${b.doneToday ? 'dn' : ''}" data-fz="habitToggle" data-id="${esc(b.id)}" title="${esc(b.t)} · ${b.min} мин">${esc(b.t)} ${b.doneToday ? '✓' : b.streak ? '🔥' + b.streak : ''}</button>`).join('')}</div>`;
+  if (f.rec.urgent) h += `<div class="ph urg" title="${esc(f.rec.text)}">${esc(f.rec.text)}</div>`;
+  else if (o.phrase) h += `<div class="ph" title="${esc(f.phrase)}">${esc(f.phrase)}</div>`;
+  return h ? `<div class="fz">${h}</div>` : '';
+}
+function focusBlock(f, open) {   // full block for the panel
+  if (!f || !f.opts) return '';
+  const o = f.opts;
+  if (!f.enabled) return '<div class="grp"><div class="ss"><span class="nm" style="color:var(--mut)">Блок «Фокус» выключен</span><button class="ok" data-fzon="1">Включить</button></div></div>';
+  let h = `<details class="grp" data-k="focus" ${fzOpen ? 'open' : ''}><summary><span class="n">🐸 Фокус</span><span class="m">${f.frogs.filter(x => x.done).length}/${f.frogs.length} лягушек</span></summary>`;
+  h += `<div class="ss" style="margin-top:6px"><span class="nm" style="white-space:normal;color:${f.rec.urgent ? '#ffd27a' : 'var(--fg)'}">${esc(f.rec.text)}</span></div>`;
+  if (fzMsg) h += `<div class="ss"><span class="nm" style="color:#ff8a8a;white-space:normal">${esc(fzMsg)}</span></div>`;
+  if (o.phrase) h += `<div class="ss"><span class="nm" style="color:var(--mut);white-space:normal;font-style:italic">${esc(f.phrase)}</span>${fzb('phraseNext', '', '🔄', 'gh', 'title="Другая фраза"')}</div>`;
+  if (o.frogs) {
+    h += `<h4>Лягушки дня · ${f.frogs.length}/${o.frogsMax}</h4>`;
+    h += f.carry.map(c => `<div class="ss"><span class="nm" style="white-space:normal">↩ ${esc(c.t)} <small style="color:var(--mut)">со вчера</small></span>${fzb('frogCarry', c.id, 'Сегодня', 'gh')}${fzb('frogRemove', c.id, '✕')}</div>`).join('');
+    h += f.frogs.map(x => `<div class="ss ${x.done ? 'dn' : ''}">${fzb('frogToggle', x.id, x.done ? '✓' : '', 'ck')}${fzEd('frog', x.id, x.t)}${fzb('frogRemove', x.id, '✕')}</div>`).join('');
+    if (f.frogs.length < o.frogsMax) h += addRow('frog', 'Самая неприятная задача на сегодня', 'frogAdd');
+    h += `<div class="ss"><span class="nm" style="color:var(--mut)">Съедено за 7 дней: ${f.frogsWeek}</span></div>`;
+  }
+  if (o.habits) {
+    h += '<h4>Привычки</h4>';
+    for (const b of f.habits) {
+      h += `<div class="ss ${b.doneToday ? 'dn' : ''}">${fzb('habitToggle', b.id, b.doneToday ? '✓' : '', 'ck')}${fzEd('habit', b.id, b.t, { min: b.min, html: `${esc(b.t)} <small style="color:var(--mut)">${b.min} мин</small>` })}<span class="wk" title="последние 7 дней">${b.week.map(d => `<i class="${d ? 'wd' : ''}"></i>`).join('')}</span><span class="v">${b.streak ? '🔥' + b.streak : '—'}</span>${fzDel('habitRemove', b.id)}</div>`;
+      if (b.word) h += `<div class="ss" style="padding-left:21px"><span class="nm" style="white-space:normal"><b>${esc(f.word.de)}</b> — ${esc(f.word.ru)}</span>${fzb('wordKnown', '', 'Знаю', 'ok')}${fzb('wordNext', '', 'Другое', 'gh')}</div>`;
+    }
+    h += `<div class="fz-add"><input data-fi="habit" maxlength="40" placeholder="Новая привычка"><input data-fi="habitmin" type="number" min="1" max="240" value="15" style="flex:0 0 46px" title="минут в день"><button class="ok" data-fadd="habitAdd" data-fkey="habit">+</button></div>`;
+  }
+  if (o.goals) {
+    h += '<h4>Цели</h4>';
+    h += f.goals.map(g => {
+      const gd = `data-goal="${esc(g.id)}"`;
+      return `<details class="grp" data-k="g:${esc(g.id)}" ${open.has('g:' + g.id) ? 'open' : ''} style="margin-bottom:4px"><summary><span class="n">${esc(g.t)}</span><span class="m">${g.done}/${g.total} · ${g.pct}%</span></summary>
+      <div class="bar" style="margin:5px 0"><span style="width:${g.pct}%;background:var(--acc)"></span></div>
+      ${g.subs.map((s, i) => `<div class="ss ${s.done ? 'dn' : ''}${g.next === s.id ? ' nx' : ''}">${fzb('subToggle', s.id, s.done ? '✓' : '', 'ck', gd)}${fzEd('sub', s.id, s.t, { goal: g.id, html: esc(s.t) + (g.next === s.id ? ' <small style="color:var(--acc)">← следующий</small>' : '') })}${!s.done && !s.frog ? fzb('subToFrog', s.id, '🐸', 'gh', gd + ' title="Сделать лягушкой дня"') : ''}${i > 0 ? fzb('subMove', s.id, '↑', 'gh', gd + ' data-dir="-1"') : ''}${i < g.subs.length - 1 ? fzb('subMove', s.id, '↓', 'gh', gd + ' data-dir="1"') : ''}${fzb('subRemove', s.id, '✕', '', gd)}</div>`).join('')}
+      ${addRow('sub:' + g.id, 'Следующий шаг', 'subAdd', gd)}
+      <div class="ss" style="margin-top:4px">${fzEd('goal', g.id, g.t, { html: '<span style="color:var(--mut)">Название цели</span>' })}${fzDel('goalRemove', g.id)}</div></details>`;
+    }).join('');
+    h += addRow('goal', 'Новая цель', 'goalAdd');
+  }
+  const chk = (k, t) => `<label class="ss"><input type="checkbox" data-fset="${k}" ${o[k] ? 'checked' : ''} style="flex:none;width:14px"><span class="nm">${t}</span></label>`;
+  const seg = (k, vals, unit) => `<div class="ss"><span class="nm">${unit[0]}</span><span class="seg">${vals.map(v => `<button class="${o[k] === v ? 'sel' : ''}" data-fsetv="${k}" data-v="${v}">${v}</button>`).join('')}</span></div>`;
+  h += `<details class="grp" data-k="fzset" ${open.has('fzset') ? 'open' : ''} style="margin-top:6px"><summary><span class="n">Настройки блока</span></summary>
+    ${chk('enabled', 'Показывать блок «Фокус»')}${chk('frogs', 'Лягушки дня')}${chk('habits', 'Привычки (немецкий и др.)')}${chk('goals', 'Цели и подзадачи')}${chk('phrase', 'Мотивирующие фразы')}${chk('notify', 'Напоминание (уведомление Windows)')}
+    ${seg('frogsMax', [1, 2, 3, 4, 5], ['Лягушек в день'])}${seg('remindHour', [10, 12, 14, 16, 18], ['Напоминать с, ч'])}</details></details>`;
+  return h;
+}
 const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];
 
 function render(d) {
   lastD = d;
-  if (view === 'panel' && document.activeElement && document.activeElement.tagName === 'INPUT') return;   // don't wipe a key being typed
+  if (view === 'panel' && document.activeElement && document.activeElement.tagName === 'INPUT' && document.activeElement.type !== 'checkbox') return;   // don't wipe a key being typed
   const { stats: s, level, worst, analysis: a, cfg, usage: us } = d, c = cfg;
   const m = metric('CPU', s.cpu, c) + metric('RAM', s.ram, c) + metric('GPU', s.gpu, c) + metric('Диск', s.disk, { warn: 85, crit: 95 });
   if (view === 'widget') {
@@ -299,7 +380,7 @@ function render(d) {
     const pd = posOf(avgOf('rx')), pu = posOf(avgOf('tx'));
     const ind = sv ? `<div class="res" data-dismiss="1">${sv.html}</div>` : gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : dialSvg(prevD, prevU);
     $('#w').className = 'card l' + level;
-    $('#wtop').innerHTML = `<div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}`;
+    $('#wtop').innerHTML = `<div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}${focusStrip(d.focus)}`;
     updateScan(d);
     const anim = (el, fn) => { if (el) { el.getBoundingClientRect(); fn(el); } };   // reflow first so the CSS transition runs from the previous value
     if (sv) { anim($('#sd'), e => { e.style.transform = `rotate(${sv.tgtD}deg)`; }); anim($('#su'), e => { e.style.transform = `rotate(${sv.tgtU}deg)`; }); prevSD = sv.tgtD; prevSU = sv.tgtU; }
@@ -315,11 +396,13 @@ function render(d) {
   const proc = (p, k) => `<div class="p"><span class="nm">${esc(p.name)}<small>${p.pid} · ${fmtAge(p.ageMin)}</small></span><span class="chip">${p.cat}</span>${p.flags.map(f => `<span class="flag">${esc(f)}</span>`).join('')}<span class="v">${fmtMem(p.memMB)} · ${p.cpu}%</span><button data-pid="${p.pid}" data-name="${esc(p.name)}" data-mem="${p.memMB}" data-proj="${esc(p.project || '')}">✕</button></div>`;
   const open = new Set([...document.querySelectorAll('details[open]')].map(x => x.dataset.k));
   const sc = $('.scroll'), top = sc ? sc.scrollTop : 0;
+  const fd = document.querySelector('details[data-k="focus"]'); if (fd) fzOpen = fd.open;
+  const keep = {}; document.querySelectorAll('input[data-fi]').forEach(i => { keep[i.dataset.fi] = i.value; });   // typed-but-not-added text survives a refresh
   $('#app').innerHTML = `<div class="card l${level}"><div class="hd"><span class="dot"></span>PC Monitor<small style="margin:0 auto 0 6px">v${esc(d.version || '')}</small><span class="x" id="x">✕</span></div>
   <div class="status">${STATUS[level]}${level ? ' — ' + esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : ''} · RAM ${s.ramUsedGB.toFixed(1)} / ${s.ramTotalGB.toFixed(0)} ГБ</div>
   <div class="grid">${m}</div>
   <div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>
-  <div class="scroll">${!a ? '<div class="empty">Сканирую процессы…</div>' : `
+  <div class="scroll">${focusBlock(d.focus, open)}${!a ? '<div class="empty">Сканирую процессы…</div>' : `
     ${sus.length ? `<h4>Подозрительные (${sus.length})</h4><div class="grp sus">${sus.map(proc).join('')}</div>` : ''}
     ${a.llm && (a.llm.tools.length || a.llm.local.length) ? `<h4>LLM: инструменты и модели</h4><div class="grp">
       ${a.llm.local.map(m => `<div class="ss"><span class="on"></span><span class="nm" title="${esc(m.model)}">${esc(m.runtime === 'ollama' ? 'Ollama' : 'LM Studio')} · ${esc(m.model)}</span><span class="v">${m.sizeMB ? fmtMem(m.sizeMB) + (m.vramMB ? ' (GPU ' + fmtMem(m.vramMB) + ')' : '') : 'загружена'}${m.expiresInMin != null ? ' · ещё ' + m.expiresInMin + 'м' : ''}</span>${m.runtime === 'ollama' ? `<button data-unload="${esc(m.model)}" data-rt="ollama">Выгрузить</button>` : ''}</div>`).join('')}
@@ -332,6 +415,7 @@ function render(d) {
     ${a.browsers.length ? `<h4>Браузеры</h4><div class="grp">${a.browsers.map(b => `<div class="ss"><span class="nm">${esc(b.name)}</span><span class="v">${b.count} проц. · ${fmtMem(b.memMB)} · ${b.cpu.toFixed(0)}%</span></div>`).join('')}</div>` : ''}
     ${a.sessions.length ? `<h4>LLM-сессии (CLI)</h4><div class="grp">${a.sessions.map(x => `<div class="ss"><span class="${x.active ? 'on' : 'off'}"></span><span class="nm" title="${esc(x.cwd)}">${esc(x.name)}<small style="color:var(--mut);margin-left:4px">${esc(x.tool || '')}</small></span><span class="v">${x.active ? 'активна' : fmtAge(Math.round((Date.now() - x.last) / 60000)) + ' назад'}</span></div>`).join('')}</div>` : ''}`}
   </div></div>`;
+  document.querySelectorAll('input[data-fi]').forEach(i => { if (keep[i.dataset.fi] != null && i.dataset.fi !== 'edit' && i.dataset.fi !== 'editmin') i.value = keep[i.dataset.fi]; });
   const ns = $('.scroll'); if (ns) ns.scrollTop = top;
   $('#x').onclick = () => api.closePanel();
 }
@@ -339,15 +423,67 @@ function render(d) {
 if (view === 'widget') {
   buildWidget();
   document.addEventListener('contextmenu', e => { e.preventDefault(); api.widgetMenu(); });
-  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl, .res, .scan')) api.openPanel(); });
+  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl, .res, .scan, .fz button')) api.openPanel(); });
   // drag the widget by any point (JS-based so right-click and double-click keep working)
   let dragging = false;
-  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl, .res, .scan')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
+  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl, .res, .scan, .fz button')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
   document.addEventListener('pointermove', e => { if (dragging) api.drag('move', e.screenX, e.screenY); });
   const end = e => { if (dragging) { dragging = false; api.drag('end', e.screenX, e.screenY); } };
   document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
 }
+// ---- Focus handlers (same script runs in widget and panel) ----
+function fzSay(msg) {
+  fzMsg = msg || ''; clearTimeout(fzMsgT); fzMsgT = setTimeout(() => { fzMsg = ''; if (lastD) render(lastD); }, 6000);
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  if (lastD) render(lastD);
+}
+const fzVal = k => { const i = document.querySelector(`input[data-fi="${k}"]`); return i ? i.value : ''; };
+document.addEventListener('keydown', e => {
+  if (!e.target.matches || !e.target.matches('input[data-fi]')) return;
+  const row = e.target.closest('.fz-add, .ss');
+  if (e.key === 'Enter') { const b = row && row.querySelector('button[data-fadd], button[data-fsave]'); if (b) b.click(); }
+  else if (e.key === 'Escape' && fzEdit) { fzEdit = ''; e.target.blur(); if (lastD) render(lastD); }
+});
+document.addEventListener('change', async e => {
+  const c = e.target.closest && e.target.closest('input[data-fset]');
+  if (c) await api.focusSettings({ [c.dataset.fset]: c.checked });
+});
+document.addEventListener('toggle', e => { if (e.target.matches && e.target.matches('details[data-k="focus"]')) fzOpen = e.target.open; }, true);
+async function focusClick(e) {
+  const T = e.target.closest.bind(e.target);
+  if (T('button[data-fzon]')) { await api.focusSettings({ enabled: true }); return true; }
+  const sv = T('button[data-fsetv]'); if (sv) { await api.focusSettings({ [sv.dataset.fsetv]: +sv.dataset.v }); return true; }
+  const ed = T('button[data-fedit]'); if (ed) { fzEdit = ed.dataset.fedit; if (lastD) render(lastD); const i = document.querySelector('input[data-fi="edit"]'); if (i) { i.focus(); i.select(); } return true; }
+  const sa = T('button[data-fsave]');
+  if (sa) {
+    const [kind, id] = sa.dataset.fsave.split(':'), p = { kind, id, goalId: sa.dataset.goal, t: fzVal('edit') };
+    if (kind === 'habit') p.min = fzVal('editmin');
+    fzEdit = ''; const r = await api.focus('edit', p); if (!r.ok) fzSay(r.msg); else if (lastD) render(lastD); return true;
+  }
+  const fa = T('button[data-fadd]');
+  if (fa) {
+    const key = fa.dataset.fkey, t = fzVal(key), p = { t, goalId: fa.dataset.goal };
+    if (key === 'habit') p.min = fzVal('habitmin');
+    document.querySelectorAll(`input[data-fi="${CSS.escape(key)}"]`).forEach(i => { i.value = ''; });
+    const r = await api.focus(fa.dataset.fadd, p);
+    if (!r.ok) { fzSay(r.msg); const i = document.querySelector(`input[data-fi="${CSS.escape(key)}"]`); if (i) i.value = t; }
+    return true;
+  }
+  const fz = T('button[data-fz]');
+  if (fz) {
+    const type = fz.dataset.fz, id = fz.dataset.id;
+    if ((type === 'habitRemove' || type === 'goalRemove') && fzArm !== type + id) {   // two-step delete: history/subtasks go with it
+      fzArm = type + id; clearTimeout(fzArmT); fzArmT = setTimeout(() => { fzArm = ''; if (lastD) render(lastD); }, 4000); if (lastD) render(lastD); return true;
+    }
+    fzArm = '';
+    const r = await api.focus(type, { id, goalId: fz.dataset.goal, dir: +fz.dataset.dir || 0 });
+    if (!r.ok) fzSay(r.msg);
+    return true;
+  }
+  return false;
+}
 document.addEventListener('click', async e => {
+  if (await focusClick(e)) return;
   if (e.target.closest('button[data-speed]')) { api.speedStart(); return; }
   if (e.target.closest('button[data-report]')) { reportOpen = !reportOpen; if (reportOpen) dismissedAt = 0; if (lastD) render(lastD); return; }
   if (e.target.closest('[data-dismiss]')) { const st = lastD && lastD.speedtest; if (st && !st.running) { dismissedAt = st.result ? st.result.at : 0; reportOpen = false; if (lastD) render(lastD); } return; }
