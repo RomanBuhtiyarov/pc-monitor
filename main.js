@@ -2,7 +2,7 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen, dialog, No
 const path = require('path'), fs = require('fs');
 const { execFile } = require('child_process');
 const si = require('systeminformation');
-const { scan } = require('./src/procs');
+const { scan, PROTECTED } = require('./src/procs');
 const usage = require('./src/usage');
 const providers = require('./src/providers');
 const speedtest = require('./src/speedtest');
@@ -12,10 +12,12 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=64');
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('local.pcmonitor');
 
-const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true, budgets: { claude5h: 0, claudeDay: 0, claudeWeek: 0, anthropicMonth: 0, openaiMonth: 0 } };
+const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true, scanSec: 60, hogCpu: 30, hogMinSec: 60, budgets: { claude5h: 0, claudeDay: 0, claudeWeek: 0, anthropicMonth: 0, openaiMonth: 0 } };
 let cfgFile, cfg = { ...DEFAULTS };
 const saveCfg = () => { try { fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2)); } catch {} };
 
+const SCAN_STEPS = [30, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600];   // CPU scanner interval choices, seconds
+const scanSec = () => SCAN_STEPS.includes(cfg.scanSec) ? cfg.scanSec : 60;
 let tray, widget, panel;
 let stats = { cpu: 0, ram: 0, ramUsedGB: 0, ramTotalGB: 0, disk: 0, gpu: null, rx: 0, tx: 0 };
 let statsSeq = 0;
@@ -71,7 +73,7 @@ function maybeNotify() {
   new Notification({ title: `Перегрузка: ${worst.name} ${worst.v.toFixed(0)}%`, body: t ? `Больше всего памяти: ${t.name} (${t.memMB} МБ)${t.project ? ' — ' + t.project : ''}. Откройте PC Monitor.` : 'Откройте PC Monitor, чтобы увидеть детали.' }).show();
 }
 const visible = w => w && !w.isDestroyed() && w.isVisible();
-const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets } }); };
+const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
 
 async function fastTick() {
   try {
@@ -100,8 +102,8 @@ async function scanTick() {
   try { analysis = await scan(cfg); lastScan = Date.now(); broadcast(); } catch (e) { console.error(e); }
   scanning = false;
 }
-function scanLoop() { // 6s while panel is open, otherwise once a minute
-  if (Date.now() - lastScan > (visible(panel) ? 6000 : 60000)) scanTick();
+function scanLoop() { // 6s while panel is open, otherwise at the CPU scanner interval chosen in the widget
+  if (Date.now() - lastScan > (visible(panel) ? 6000 : scanSec() * 1000)) scanTick();
   setTimeout(scanLoop, 3000);
 }
 
@@ -158,12 +160,11 @@ function buildMenu() {
 }
 
 // ---------- IPC ----------
-const PROTECTED = /^(system|csrss|wininit|winlogon|services|lsass|smss|explorer|svchost|dwm|registry|fontdrvhost)(\.exe)?$/i;
-ipcMain.handle('kill', async (_e, { pid, name, memMB, project }) => {
+ipcMain.handle('kill', async (_e, { pid, name, memMB, project, cpu }) => {
   if (!Number.isInteger(pid) || pid <= 4 || pid === process.pid || PROTECTED.test(String(name))) return { ok: false, msg: 'Системный процесс — защищён' };
   killing = true;
   const r = await dialog.showMessageBox({ type: 'warning', buttons: ['Завершить', 'Отмена'], defaultId: 1, cancelId: 1, title: 'Завершить процесс?',
-    message: `${name} (PID ${pid})`, detail: `Память: ${memMB} МБ${project ? '\nПроект: ' + project : ''}\n\nПроцесс и его дочерние процессы будут принудительно закрыты. Несохранённые данные будут потеряны.` });
+    message: `${name} (PID ${pid})`, detail: `${Number.isFinite(cpu) ? 'CPU: ' + cpu + '%\n' : ''}Память: ${memMB} МБ${project ? '\nПроект: ' + project : ''}\n\nПроцесс и его дочерние процессы будут принудительно закрыты. Несохранённые данные будут потеряны.` });
   killing = false;
   if (r.response !== 0) return { ok: false, msg: 'Отменено' };
   return new Promise(res => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, e => { setTimeout(scanTick, 800); res({ ok: !e, msg: e ? 'Не удалось завершить' : 'Завершён' }); }));
@@ -218,6 +219,11 @@ ipcMain.on('widget-size', (_e, h) => {
   const y = Math.max(wa.y, Math.min(b.y, wa.y + wa.height - h));   // keep the grown window on screen
   widget.setBounds({ x: b.x, y, width: b.width, height: h });
   if (dragOff) dragOff.h = h;
+});
+ipcMain.handle('scan-interval', (_e, sec) => {
+  if (!SCAN_STEPS.includes(sec)) return { ok: false };
+  cfg.scanSec = sec; saveCfg(); broadcast();
+  return { ok: true };
 });
 ipcMain.on('open-panel', togglePanel);
 ipcMain.on('close-panel', () => panel && !panel.isDestroyed() && panel.close());

@@ -96,8 +96,39 @@ function projectOf(cmd, roots, sessions) {
 
 const cpuStreak = new Map();
 
+// System processes that can never be closed from the app (also enforced by the kill handler in main.js).
+const PROTECTED = /^(system|csrss|wininit|winlogon|services|lsass|smss|explorer|svchost|dwm|registry|fontdrvhost)(\.exe)?$/i;
+// Background services that legitimately burn CPU for a while (antivirus, indexer, updates, WSL VM...): never recommended for closing.
+const HOG_IGNORE = /^(msmpeng|msmpengcp|nissrv|mpdefendercoreservice|securityhealthservice|searchindexer|searchprotocolhost|searchfilterhost|trustedinstaller|tiworker|compattelrunner|wmiprvse|audiodg|vmmem|vmmemwsl|vmcompute|memory compression|system idle process)(\.exe)?$/i;
+const hogStreak = new Map();   // "pid:start" -> { n, since }: consecutive scans above the hog threshold
+
+// Sustained, unjustified CPU hog = one process above cfg.hogCpu % of the whole CPU for several scans in a row
+// and at least cfg.hogMinSec seconds. Our own process tree (incl. the PowerShell scan) and protected processes are skipped.
+function findHog(list, cfg, prevAt, now) {
+  const kids = new Map();
+  for (const p of list) { const a = kids.get(p.parentPid); if (a) a.push(p.pid); else kids.set(p.parentPid, [p.pid]); }
+  const self = new Set([process.pid]);
+  for (const stack = [process.pid]; stack.length;) for (const c of kids.get(stack.pop()) || []) if (!self.has(c)) { self.add(c); stack.push(c); }
+  const thr = cfg.hogCpu || 30, minMs = (cfg.hogMinSec || 60) * 1000;
+  const keys = new Set(); let best = null;
+  for (const p of list) {
+    if (p.pid <= 4 || self.has(p.pid) || PROTECTED.test(p.name) || HOG_IGNORE.test(p.name)) continue;
+    const key = p.pid + ':' + p.started;
+    if (p.cpu < thr) continue;
+    keys.add(key);
+    const s = hogStreak.get(key) || { n: 0, since: prevAt || now };   // the first hot sample averages the interval before this scan
+    s.n++; hogStreak.set(key, s);
+    if (s.n >= 2 && now - s.since >= minMs && (!best || p.cpu > best.cpu))
+      best = { pid: p.pid, name: p.name, cpu: +p.cpu.toFixed(1), memMB: Math.round(p.memRss / 1024), heldMs: now - s.since };
+  }
+  for (const k of hogStreak.keys()) if (!keys.has(k)) hogStreak.delete(k);
+  return best;
+}
+
 async function scan(cfg) {
+  const prevAt = lastAt;
   const [list, nr, local] = await Promise.all([listProcesses(), notResponding(), llm.localModels()]);
+  const hog = findHog(list, cfg, prevAt, Date.now());
   const pids = new Set(list.map(p => p.pid));
   const sessions = claudeSessions().concat(llm.codexSessions()).sort((a, b) => b.last - a.last).slice(0, 15);
   const tools = llm.summarizeTools(list);
@@ -149,7 +180,7 @@ async function scan(cfg) {
   gl.forEach(g => { g.procs.sort((a, b) => b.memMB - a.memMB); g.cpu = +g.cpu.toFixed(1); });
   const suspects = procs.filter(p => p.flags.length).sort((a, b) => b.memMB - a.memMB);
   const top = procs.slice().sort((a, b) => b.memMB - a.memMB)[0] || null;
-  return { groups: gl, suspects, sessions, llm: { tools, local }, browsers: Object.values(browsers), top, at: Date.now() };
+  return { groups: gl, suspects, sessions, llm: { tools, local }, browsers: Object.values(browsers), top, hog, at: Date.now() };
 }
 
-module.exports = { scan };
+module.exports = { scan, PROTECTED };
