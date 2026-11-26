@@ -75,8 +75,8 @@ function maybeNotify() {
 }
 const visible = w => w && !w.isDestroyed() && w.isVisible();
 function focusRemind() {   // once a day, only when something is urgent; no extra timers (rides on the metrics loop)
-  const t = focus.reminder(cfg); if (!t) return;
-  const n = new Notification({ title: 'Фокус', body: t }); n.on('click', () => { if (!panel || panel.isDestroyed()) togglePanel(); }); n.show();
+  const done = focus.tick(), t = done || focus.reminder(cfg); if (!t) return;
+  const n = new Notification({ title: done ? '🍅 Помидор' : 'Фокус', body: t }); n.on('click', () => { if (!panel || panel.isDestroyed()) togglePanel(); }); n.show();
 }
 const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), focus: focus.summary(cfg), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
 
@@ -149,6 +149,9 @@ function ensureWidget(force) {
   if (b.x + b.width < wa.x + 20 || b.x > wa.x + wa.width - 20 || b.y < wa.y - 5 || b.y > wa.y + wa.height - 20)
     widget.setPosition(wa.x + wa.width - b.width - 20, wa.y + 20);   // off-screen after display change
 }
+function setFocusOpt(k, v) { const o = focus.opts(cfg); cfg.focus = { ...o, [k]: v, enabled: k === 'enabled' ? v : v || o.enabled }; saveCfg(); broadcast(); }
+// what the monitor shows: used by the tray menu and the widget's right-click menu
+const focusMenu = () => { const o = focus.opts(cfg); return [['phrase', 'Мотиватор дня'], ['frogs', 'Съесть лягушку'], ['lang', 'Изучаем язык']].map(([k, label]) => ({ label, type: 'checkbox', checked: o.enabled && o[k], click: i => setFocusOpt(k, i.checked) })); };
 function buildMenu() {
   return Menu.buildFromTemplate([
     { label: `PC Monitor v${app.getVersion()}`, enabled: false },
@@ -157,7 +160,8 @@ function buildMenu() {
     { label: 'Показать виджет', click: () => setWidget(true) },
     { label: 'Скрыть виджет', click: () => setWidget(false) },
     { label: 'Уведомления о перегрузке', type: 'checkbox', checked: cfg.notify, click: i => { cfg.notify = i.checked; saveCfg(); } },
-    { label: 'Блок «Фокус»', type: 'checkbox', checked: focus.opts(cfg).enabled, click: i => { cfg.focus = { ...focus.opts(cfg), enabled: i.checked }; saveCfg(); broadcast(); } },
+    ...focusMenu(),
+    { label: 'Блок «Фокус»', type: 'checkbox', checked: focus.opts(cfg).enabled, click: i => setFocusOpt('enabled', i.checked) },
     { label: 'Автозапуск с Windows', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: i => app.setLoginItemSettings({ openAtLogin: i.checked }) },
     { label: 'Открыть файл настроек (пороги)', click: () => shell.openPath(cfgFile) },
     { type: 'separator' },
@@ -234,7 +238,7 @@ ipcMain.handle('scan-interval', (_e, sec) => {
 ipcMain.handle('focus', (_e, { type, p } = {}) => { const r = focus.act(String(type), p, cfg); broadcast(); return r; });
 ipcMain.handle('focus-settings', (_e, p = {}) => {
   const cur = focus.opts(cfg), n = { ...cur };
-  for (const k of ['enabled', 'frogs', 'habits', 'goals', 'phrase', 'notify']) if (typeof p[k] === 'boolean') n[k] = p[k];
+  for (const k of ['enabled', 'frogs', 'lang', 'habits', 'goals', 'phrase', 'notify']) if (typeof p[k] === 'boolean') n[k] = p[k];
   if (p.frogsMax != null) n.frogsMax = p.frogsMax;
   if (p.remindHour != null) n.remindHour = p.remindHour;
   cfg.focus = focus.opts({ focus: n }); saveCfg(); broadcast(); return { ok: true };
@@ -242,7 +246,7 @@ ipcMain.handle('focus-settings', (_e, p = {}) => {
 ipcMain.on('open-panel', togglePanel);
 ipcMain.on('close-panel', () => panel && !panel.isDestroyed() && panel.close());
 ipcMain.on('widget-menu', () => Menu.buildFromTemplate([
-  { label: 'Подробнее', click: togglePanel }, { label: 'Скрыть виджет', click: () => setWidget(false) }, { type: 'separator' }, { label: 'Выход', click: () => app.quit() },
+  { label: 'Подробнее', click: togglePanel }, { label: 'Скрыть виджет', click: () => setWidget(false) }, { type: 'separator' }, ...focusMenu(), { type: 'separator' }, { label: 'Выход', click: () => app.quit() },
 ]).popup());
 
 app.whenReady().then(() => {

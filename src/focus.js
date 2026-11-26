@@ -3,8 +3,9 @@
 const fs = require('fs'), path = require('path');
 const { WORDS, PHRASES } = require('./focus-data');
 
+const EST = [15, 20, 25, 30, 40];   // pomodoro length choices for a frog, minutes
 const LIM = { goals: 20, subs: 50, habits: 8, text: 120, keepDays: 60 };
-const OPT_DEFAULTS = { enabled: true, frogs: true, habits: true, goals: true, phrase: true, frogsMax: 2, remindHour: 14, notify: true };
+const OPT_DEFAULTS = { enabled: true, frogs: true, lang: true, habits: true, goals: true, phrase: true, frogsMax: 2, remindHour: 14, notify: true };
 const opts = cfg => {
   const o = { ...OPT_DEFAULTS, ...((cfg && cfg.focus) || {}) };
   o.frogsMax = Math.max(1, Math.min(5, Math.round(+o.frogsMax) || 2));
@@ -19,7 +20,7 @@ const dayNum = d => Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const str = (s, n = LIM.text) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
 const minutes = v => Math.max(1, Math.min(240, Math.round(+v) || 15));
-const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], shift: { day: '', word: 0, phrase: 0 }, notified: '' });
+const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], shift: { day: '', word: 0, phrase: 0 }, notified: '', learned: {}, pomo: {}, timer: null });
 
 function init(dir) {
   file = path.join(dir, 'focus.json'); db = fresh();
@@ -28,6 +29,8 @@ function init(dir) {
     for (const k of ['frogs', 'goals', 'habits', 'known']) if (Array.isArray(j[k])) db[k] = j[k];
     if (j.shift && typeof j.shift === 'object') db.shift = { day: '', word: 0, phrase: 0, ...j.shift };
     if (typeof j.notified === 'string') db.notified = j.notified;
+    for (const k of ['learned', 'pomo']) if (j[k] && typeof j[k] === 'object') db[k] = j[k];
+    if (j.timer && Number.isFinite(j.timer.end)) db.timer = j.timer;
     for (const h of db.habits) if (!h.days || typeof h.days !== 'object') h.days = {};
   } catch {}
 }
@@ -81,12 +84,15 @@ function summary(cfg, now = new Date()) {
     return { id: g.id, t: g.t, subs: g.subs.map(s => ({ id: s.id, t: s.t, done: !!s.done, frog: active.has(s.id) })), done, total: g.subs.length, pct: g.subs.length ? Math.round(done / g.subs.length * 100) : 0, next: nx ? nx.id : null };
   });
   const raw = wordRaw(now).split('|');
+  const ph = PHRASES[(dayNum(now) + shiftFor(now).phrase) % PHRASES.length].split('|');
   const rec = recommend({ frogs, carry, habits, goals }, o, now.getHours());
   return {
     opts: o, enabled: o.enabled, day: key,
-    frogs: frogs.map(f => ({ id: f.id, t: f.t, done: !!f.done })), carry: carry.map(f => ({ id: f.id, t: f.t })),
+    frogs: frogs.map(f => ({ id: f.id, t: f.t, done: !!f.done, est: f.est || 25, pomo: f.pomo || 0 })),
+    timer: db.timer, pomoToday: db.pomo[key] || 0,
+    learned: { day: db.learned[key] || 0, month: Object.entries(db.learned).reduce((a, [k, n]) => a + (k.startsWith(key.slice(0, 7)) ? n : 0), 0) }, carry: carry.map(f => ({ id: f.id, t: f.t })),
     frogsWeek: db.frogs.filter(f => f.done && f.doneDay >= dayKey(weekAgo)).length,
-    habits, goals, word: { de: raw[0], ru: raw[1] }, phrase: PHRASES[(dayNum(now) + shiftFor(now).phrase) % PHRASES.length], rec,
+    habits, goals, word: { de: raw[0], ru: raw[1] }, phrase: { de: ph[0], ru: ph[1] }, rec,
   };
 }
 
@@ -97,14 +103,27 @@ function reminder(cfg, now = new Date()) {
   db.notified = dayKey(now); save(); return s.rec.text;
 }
 
+// Pomodoro finished? Returns a notification text (once), or null. A timer that ran out long ago (PC asleep, app closed) is dropped.
+function tick(now = new Date()) {
+  const tm = db && db.timer; if (!tm || now.getTime() < tm.end) return null;
+  db.timer = null; let msg = null;
+  const f = db.frogs.find(x => x.id === tm.id);
+  if (f && now.getTime() - tm.end < 10 * 60e3) {
+    const key = dayKey(now); db.pomo[key] = (db.pomo[key] || 0) + 1; f.pomo = (f.pomo || 0) + 1;
+    msg = `Помидор ${tm.min} мин готов: «${f.t}». Сделай перерыв 5 минут. Если лягушка съедена — отметь ✓.`;
+  }
+  save(); return msg;
+}
+const stopTimer = id => { if (db.timer && db.timer.id === id) db.timer = null; };
+
 const NO = msg => ({ ok: false, msg });
 const OK = { ok: true };
 const goalOf = id => db.goals.find(g => g.id === id);
-function frogAdd(t, o, now, link) {
+function frogAdd(t, o, now, link, est) {
   t = str(t); if (!t) return NO('Пустая задача');
   const key = dayKey(now);
   if (db.frogs.filter(f => f.day === key).length >= o.frogsMax) return NO(`Лимит: ${o.frogsMax} на день. Убери одну или увеличь лимит в настройках.`);
-  db.frogs.push({ id: uid(), t, day: key, done: false, ...(link || {}) });
+  db.frogs.push({ id: uid(), t, day: key, done: false, est: EST.includes(+est) ? +est : 25, ...(link || {}) });
   return OK;
 }
 function act(type, p, cfg, now = new Date()) {
@@ -112,14 +131,21 @@ function act(type, p, cfg, now = new Date()) {
   const o = opts(cfg), key = dayKey(now);
   let r = OK;
   switch (type) {
-    case 'frogAdd': r = frogAdd(p.t, o, now); break;
+    case 'frogAdd': r = frogAdd(p.t, o, now, null, p.est); break;
+    case 'frogEst': { const f = db.frogs.find(x => x.id === p.id); if (!f) return NO('Не найдено'); f.est = EST[(EST.indexOf(f.est || 25) + 1) % EST.length]; break; }
+    case 'frogStart': {
+      const f = db.frogs.find(x => x.id === p.id && x.day === key && !x.done); if (!f) return NO('Не найдено');
+      if (db.timer && db.timer.end > now.getTime()) return NO('Помидор уже идёт — дождись конца или останови его');
+      const min = f.est || 25; db.timer = { id: f.id, min, end: now.getTime() + min * 60e3 }; break;
+    }
+    case 'frogStop': db.timer = null; break;
     case 'frogToggle': {
       const f = db.frogs.find(x => x.id === p.id); if (!f) return NO('Не найдено');
-      f.done = !f.done; if (f.done) f.doneDay = key; else delete f.doneDay;
+      f.done = !f.done; if (f.done) stopTimer(f.id); if (f.done) f.doneDay = key; else delete f.doneDay;
       const g = f.goalId && goalOf(f.goalId), s = g && g.subs.find(x => x.id === f.subId); if (s) s.done = f.done;
       break;
     }
-    case 'frogRemove': db.frogs = db.frogs.filter(x => x.id !== p.id); break;
+    case 'frogRemove': stopTimer(p.id); db.frogs = db.frogs.filter(x => x.id !== p.id); break;
     case 'frogCarry': {
       const f = db.frogs.find(x => x.id === p.id && x.day < key && !x.done); if (!f) return NO('Не найдено');
       if (db.frogs.filter(x => x.day === key).length >= o.frogsMax) return NO(`Лимит: ${o.frogsMax} на день`);
@@ -160,7 +186,7 @@ function act(type, p, cfg, now = new Date()) {
     }
     case 'habitRemove': db.habits = db.habits.filter(h => h.id !== p.id); break;
     case 'habitToggle': { const h = db.habits.find(x => x.id === p.id); if (!h) return NO('Не найдено'); if (h.days[key]) delete h.days[key]; else h.days[key] = true; break; }
-    case 'wordKnown': { const w = wordRaw(now); if (!db.known.includes(w)) db.known.push(w); break; }
+    case 'wordKnown': { const w = wordRaw(now); if (!db.known.includes(w)) { db.known.push(w); db.learned[key] = (db.learned[key] || 0) + 1; } break; }
     case 'wordNext': shiftFor(now).word++; break;
     case 'phraseNext': shiftFor(now).phrase++; break;
     default: return NO('Неизвестное действие');
@@ -170,4 +196,4 @@ function act(type, p, cfg, now = new Date()) {
   save(); return r;
 }
 
-module.exports = { init, summary, act, reminder, recommend, opts, OPT_DEFAULTS, reset, _db: () => db };
+module.exports = { init, summary, act, tick, reminder, recommend, opts, OPT_DEFAULTS, reset, _db: () => db };

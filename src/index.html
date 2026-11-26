@@ -99,6 +99,14 @@ button.hbt.dn{background:rgba(34,197,94,.2);color:#8be3a8}
 .wk{display:inline-flex;gap:2px}.wk i{width:6px;height:6px;border-radius:2px;background:rgba(255,255,255,.12)}.wk i.wd{background:var(--ok)}
 .fz-add{display:flex;gap:4px;margin-top:4px}
 .ss.nx .nm{color:var(--fg)}
+.sh{display:flex;align-items:center;justify-content:space-between;gap:6px;color:var(--mut);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;min-height:16px}
+.cnt{color:var(--fg);font-variant-numeric:tabular-nums}
+.fr button:not(.ck){font-size:10px;padding:1px 5px;white-space:nowrap;flex:none}
+button.tx,.fr button.tx{flex:1;min-width:0;background:none;color:var(--fg);padding:0;text-align:left;line-height:1.3;font-size:11px;white-space:normal}button.tx:hover{background:rgba(255,255,255,.06)}
+.fz>button.tx{flex:none}
+button.tx b{display:block;font-weight:600}button.tx span{display:block;color:var(--mut)}
+button.run{background:rgba(250,204,21,.2);color:#facc15;font-variant-numeric:tabular-nums}button.run:hover{background:rgba(250,204,21,.35)}
+.pm{color:var(--mut);white-space:nowrap}
 .seg button.sel{background:rgba(106,163,255,.28);color:var(--fg)}
 </style></head>
 <body><div id="app"></div>
@@ -312,18 +320,32 @@ const fzEd = (kind, id, text, o = {}) => fzEdit === kind + ':' + id
   ? `<input data-fi="edit" maxlength="120" value="${esc(text)}">${o.min != null ? `<input data-fi="editmin" type="number" min="1" max="240" value="${o.min}" style="flex:0 0 46px" title="минут в день">` : ''}<button class="ok" data-fsave="${kind}:${id}" ${o.goal ? `data-goal="${esc(o.goal)}"` : ''}>✓</button>`
   : `<span class="nm" style="white-space:normal">${o.html || esc(text)}</span><button class="gh" data-fedit="${kind}:${id}" title="Изменить">✎</button>`;
 const addRow = (key, ph, type, extra = '') => `<div class="fz-add"><input data-fi="${key}" maxlength="120" placeholder="${ph}"><button class="ok" data-fadd="${type}" data-fkey="${key}" ${extra}>+</button></div>`;
-function focusStrip(f) {   // compact strip for the always-on-screen widget
+const shown = { ph: '', wd: '' };   // which German text currently has its translation open
+const reveal = (kind, w) => `<button class="tx" data-reveal="${kind}" data-key="${esc(w.de)}" title="Нажми — перевод"><b>${esc(w.de)}</b>${shown[kind] === w.de ? `<span>${esc(w.ru)}</span>` : ''}</button>`;
+const fmtLeft = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function frogCtl(f, x) {   // pomodoro: length (click to change) + start / stop with countdown
+  const n = x.pomo ? `<small class="pm" title="Помидоров на эту задачу">🍅${x.pomo}</small>` : '';
+  if (x.done) return n;
+  return n + (f.timer && f.timer.id === x.id
+    ? fzb('frogStop', x.id, '■ ' + fmtLeft(f.timer.end - Date.now()), 'run', 'title="Остановить (помидор не засчитается)"')
+    : fzb('frogEst', x.id, x.est + 'м', 'gh', 'title="Прогноз по времени 15–40 мин: нажми, чтобы изменить"') + fzb('frogStart', x.id, '▶ Начать', 'ok'));
+}
+const wordCtl = () => fzb('wordNext', '', '↻', 'gh', 'title="Другое слово"') + fzb('wordKnown', '', '✓', 'ok', 'title="Выучил — засчитать"');
+const counter = f => `<span class="cnt" title="Выучено слов: за день / за месяц">${f.learned.day}/${f.learned.month}</span>`;
+function focusStrip(f) {   // compact sections for the always-on-screen widget
   if (!f || !f.enabled) return '';
-  const o = f.opts; let h = '';
-  if (o.frogs) h += f.frogs.length
-    ? f.frogs.map(x => `<div class="fr ${x.done ? 'dn' : ''}"><button class="ck" data-fz="frogToggle" data-id="${esc(x.id)}">${x.done ? '✓' : ''}</button><span title="${esc(x.t)}">🐸 ${esc(x.t)}</span></div>`).join('')
-    : '<div class="fr mt">🐸 лягушки не выбраны</div>';
-  if (o.frogs && f.frogs.length < o.frogsMax) h += '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Лягушки дня">＋ добавить лягушку</button></div>';
-  if (o.habits && f.habits.some(b => b.word)) h += `<div class="fr"><span title="${esc(f.word.de)} — ${esc(f.word.ru)}">🇩🇪 <b>${esc(f.word.de)}</b> — ${esc(f.word.ru)}</span><button class="gh" data-fz="wordNext" data-id="" title="Другое слово">↻</button><button class="ok" data-fz="wordKnown" data-id="" title="Знаю — больше не показывать">✓</button></div>`;
-  if (o.habits && f.habits.length) h += `<div class="hbs">${f.habits.map(b => `<button class="hbt ${b.doneToday ? 'dn' : ''}" data-fz="habitToggle" data-id="${esc(b.id)}" title="${esc(b.t)} · ${b.min} мин">${esc(b.t)} ${b.doneToday ? '✓' : b.streak ? '🔥' + b.streak : ''}</button>`).join('')}</div>`;
+  const o = f.opts, sec = (title, right, body) => `<div class="fz"><div class="sh"><span>${title}</span>${right}</div>${body}</div>`;
+  const hbt = b => `<button class="hbt ${b.doneToday ? 'dn' : ''}" data-fz="habitToggle" data-id="${esc(b.id)}" title="${esc(b.t)} · ${b.min} мин">${esc(b.t)} ${b.doneToday ? '✓' : b.streak ? '🔥' + b.streak : ''}</button>`;
+  let h = '';
+  if (o.phrase) h += sec('💬 Мотиватор дня', fzb('phraseNext', '', '🔄', 'gh', 'title="Другая фраза"'), reveal('ph', f.phrase));
+  if (o.frogs) h += sec('🐸 Съесть лягушку', `<span class="cnt" title="Помидоров сегодня">🍅 ${f.pomoToday}</span>`,
+    (f.frogs.length ? f.frogs.map(x => `<div class="fr ${x.done ? 'dn' : ''}">${fzb('frogToggle', x.id, x.done ? '✓' : '', 'ck')}<span title="${esc(x.t)}">${esc(x.t)}</span>${frogCtl(f, x)}</div>`).join('') : '<div class="fr mt">лягушки не выбраны</div>')
+    + (f.frogs.length < o.frogsMax ? '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Съесть лягушку">＋ добавить лягушку</button></div>' : ''));
+  if (o.lang) { const g = f.habits.find(b => b.word); h += sec('🇩🇪 Изучаем язык', counter(f), `<div class="fr">${reveal('wd', f.word)}${wordCtl()}</div>${g ? `<div class="hbs">${hbt(g)}</div>` : ''}`); }
+  const other = o.habits ? f.habits.filter(b => !b.word) : [];
+  if (other.length) h += `<div class="fz"><div class="hbs">${other.map(hbt).join('')}</div></div>`;
   if (f.rec.urgent) h += `<div class="ph urg" title="${esc(f.rec.text)}">${esc(f.rec.text)}</div>`;
-  else if (o.phrase) h += `<div class="ph" title="${esc(f.phrase)}">${esc(f.phrase)}</div>`;
-  return h ? `<div class="fz">${h}</div>` : '';
+  return h;
 }
 function focusBlock(f, open) {   // full block for the panel
   if (!f || !f.opts) return '';
@@ -332,19 +354,19 @@ function focusBlock(f, open) {   // full block for the panel
   let h = `<details class="grp" data-k="focus" ${fzOpen ? 'open' : ''}><summary><span class="n">🐸 Фокус</span><span class="m">${f.frogs.filter(x => x.done).length}/${f.frogs.length} лягушек</span></summary>`;
   h += `<div class="ss" style="margin-top:6px"><span class="nm" style="white-space:normal;color:${f.rec.urgent ? '#ffd27a' : 'var(--fg)'}">${esc(f.rec.text)}</span></div>`;
   if (fzMsg) h += `<div class="ss"><span class="nm" style="color:#ff8a8a;white-space:normal">${esc(fzMsg)}</span></div>`;
-  if (o.phrase) h += `<div class="ss"><span class="nm" style="color:var(--mut);white-space:normal;font-style:italic">${esc(f.phrase)}</span>${fzb('phraseNext', '', '🔄', 'gh', 'title="Другая фраза"')}</div>`;
+  if (o.phrase) h += `<h4>Мотиватор дня</h4><div class="ss">${reveal('ph', f.phrase)}${fzb('phraseNext', '', '🔄', 'gh', 'title="Другая фраза"')}</div>`;
   if (o.frogs) {
-    h += `<h4>Лягушки дня · ${f.frogs.length}/${o.frogsMax}</h4>`;
+    h += `<h4>Съесть лягушку · ${f.frogs.length}/${o.frogsMax} · 🍅 сегодня ${f.pomoToday}</h4>`;
     h += f.carry.map(c => `<div class="ss"><span class="nm" style="white-space:normal">↩ ${esc(c.t)} <small style="color:var(--mut)">со вчера</small></span>${fzb('frogCarry', c.id, 'Сегодня', 'gh')}${fzb('frogRemove', c.id, '✕')}</div>`).join('');
-    h += f.frogs.map(x => `<div class="ss ${x.done ? 'dn' : ''}">${fzb('frogToggle', x.id, x.done ? '✓' : '', 'ck')}${fzEd('frog', x.id, x.t)}${fzb('frogRemove', x.id, '✕')}</div>`).join('');
+    h += f.frogs.map(x => `<div class="ss ${x.done ? 'dn' : ''}">${fzb('frogToggle', x.id, x.done ? '✓' : '', 'ck')}${fzEd('frog', x.id, x.t)}${frogCtl(f, x)}${fzb('frogRemove', x.id, '✕')}</div>`).join('');
     if (f.frogs.length < o.frogsMax) h += addRow('frog', 'Самая неприятная задача на сегодня', 'frogAdd');
     h += `<div class="ss"><span class="nm" style="color:var(--mut)">Съедено за 7 дней: ${f.frogsWeek}</span></div>`;
   }
+  if (o.lang) h += `<h4>Изучаем язык · слов за день / месяц: ${f.learned.day}/${f.learned.month}</h4><div class="ss">${reveal('wd', f.word)}${wordCtl()}</div>`;
   if (o.habits) {
     h += '<h4>Привычки</h4>';
     for (const b of f.habits) {
       h += `<div class="ss ${b.doneToday ? 'dn' : ''}">${fzb('habitToggle', b.id, b.doneToday ? '✓' : '', 'ck')}${fzEd('habit', b.id, b.t, { min: b.min, html: `${esc(b.t)} <small style="color:var(--mut)">${b.min} мин</small>` })}<span class="wk" title="последние 7 дней">${b.week.map(d => `<i class="${d ? 'wd' : ''}"></i>`).join('')}</span><span class="v">${b.streak ? '🔥' + b.streak : '—'}</span>${fzDel('habitRemove', b.id)}</div>`;
-      if (b.word) h += `<div class="ss" style="padding-left:21px"><span class="nm" style="white-space:normal"><b>${esc(f.word.de)}</b> — ${esc(f.word.ru)}</span>${fzb('wordKnown', '', 'Знаю', 'ok')}${fzb('wordNext', '', 'Другое', 'gh')}</div>`;
     }
     h += `<div class="fz-add"><input data-fi="habit" maxlength="40" placeholder="Новая привычка"><input data-fi="habitmin" type="number" min="1" max="240" value="15" style="flex:0 0 46px" title="минут в день"><button class="ok" data-fadd="habitAdd" data-fkey="habit">+</button></div>`;
   }
@@ -360,12 +382,16 @@ function focusBlock(f, open) {   // full block for the panel
     }).join('');
     h += addRow('goal', 'Новая цель', 'goalAdd');
   }
+  return h + '</details>';
+}
+function focusSettings(f, open) {   // sits at the very bottom of the panel list
+  if (!f || !f.opts || !f.enabled) return '';
+  const o = f.opts;
   const chk = (k, t) => `<label class="ss"><input type="checkbox" data-fset="${k}" ${o[k] ? 'checked' : ''} style="flex:none;width:14px"><span class="nm">${t}</span></label>`;
   const seg = (k, vals, unit) => `<div class="ss"><span class="nm">${unit[0]}</span><span class="seg">${vals.map(v => `<button class="${o[k] === v ? 'sel' : ''}" data-fsetv="${k}" data-v="${v}">${v}</button>`).join('')}</span></div>`;
-  h += `<details class="grp" data-k="fzset" ${open.has('fzset') ? 'open' : ''} style="margin-top:6px"><summary><span class="n">Настройки блока</span></summary>
-    ${chk('enabled', 'Показывать блок «Фокус»')}${chk('frogs', 'Лягушки дня')}${chk('habits', 'Привычки (немецкий и др.)')}${chk('goals', 'Цели и подзадачи')}${chk('phrase', 'Мотивирующие фразы')}${chk('notify', 'Напоминание (уведомление Windows)')}
-    ${seg('frogsMax', [1, 2, 3, 4, 5], ['Лягушек в день'])}${seg('remindHour', [10, 12, 14, 16, 18], ['Напоминать с, ч'])}</details></details>`;
-  return h;
+  return `<details class="grp" data-k="fzset" ${open.has('fzset') ? 'open' : ''}><summary><span class="n">Настройки блока «Фокус»</span></summary>
+    ${chk('enabled', 'Показывать блок «Фокус»')}${chk('phrase', 'Мотиватор дня')}${chk('frogs', 'Съесть лягушку')}${chk('lang', 'Изучаем язык')}${chk('habits', 'Привычки')}${chk('goals', 'Цели и подзадачи')}${chk('notify', 'Напоминание (уведомление Windows)')}
+    ${seg('frogsMax', [1, 2, 3, 4, 5], ['Лягушек в день'])}${seg('remindHour', [10, 12, 14, 16, 18], ['Напоминать с, ч'])}</details>`;
 }
 const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];
 
@@ -416,7 +442,7 @@ function render(d) {
     ${a.groups.map(g => `<details class="grp" data-k="${esc(g.key)}" ${open.has(g.key) ? 'open' : ''}><summary><span class="n">${esc(g.name)}</span><span class="m">${g.procs.length} · ${fmtMem(g.memMB)} · ${g.cpu}%</span></summary>${g.procs.map(proc).join('')}</details>`).join('') || '<div class="empty">Нет данных</div>'}
     ${a.browsers.length ? `<h4>Браузеры</h4><div class="grp">${a.browsers.map(b => `<div class="ss"><span class="nm">${esc(b.name)}</span><span class="v">${b.count} проц. · ${fmtMem(b.memMB)} · ${b.cpu.toFixed(0)}%</span></div>`).join('')}</div>` : ''}
     ${a.sessions.length ? `<h4>LLM-сессии (CLI)</h4><div class="grp">${a.sessions.map(x => `<div class="ss"><span class="${x.active ? 'on' : 'off'}"></span><span class="nm" title="${esc(x.cwd)}">${esc(x.name)}<small style="color:var(--mut);margin-left:4px">${esc(x.tool || '')}</small></span><span class="v">${x.active ? 'активна' : fmtAge(Math.round((Date.now() - x.last) / 60000)) + ' назад'}</span></div>`).join('')}</div>` : ''}`}
-  </div></div>`;
+  ${focusSettings(d.focus, open)}</div></div>`;
   document.querySelectorAll('input[data-fi]').forEach(i => { if (keep[i.dataset.fi] != null && i.dataset.fi !== 'edit' && i.dataset.fi !== 'editmin') i.value = keep[i.dataset.fi]; });
   const ns = $('.scroll'); if (ns) ns.scrollTop = top;
   $('#x').onclick = () => api.closePanel();
@@ -453,6 +479,7 @@ document.addEventListener('change', async e => {
 document.addEventListener('toggle', e => { if (e.target.matches && e.target.matches('details[data-k="focus"]')) fzOpen = e.target.open; }, true);
 async function focusClick(e) {
   const T = e.target.closest.bind(e.target);
+  const rv = T('button[data-reveal]'); if (rv) { const k = rv.dataset.reveal; shown[k] = shown[k] === rv.dataset.key ? '' : rv.dataset.key; if (lastD) render(lastD); return true; }
   if (T('button[data-openpanel]')) { api.openPanel(); return true; }
   if (T('button[data-fzon]')) { await api.focusSettings({ enabled: true }); return true; }
   const sv = T('button[data-fsetv]'); if (sv) { await api.focusSettings({ [sv.dataset.fsetv]: +sv.dataset.v }); return true; }

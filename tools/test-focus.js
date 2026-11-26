@@ -51,7 +51,18 @@ assert(act('frogCarry', { id: open.id }, 6).ok && sum(6).frogs.length === 1);
 // words / phrases rotate and "known" removes a word from rotation
 const w1 = sum().word.de; act('wordNext', {}); assert.notStrictEqual(sum().word.de, w1);
 const w2 = sum().word.de; act('wordKnown', {}); assert.notStrictEqual(sum().word.de, w2);
-const p1 = sum().phrase; act('phraseNext', {}); assert.notStrictEqual(sum().phrase, p1);
+const p1 = sum().phrase.de; act('phraseNext', {}); assert.notStrictEqual(sum().phrase.de, p1); assert(sum().phrase.ru);
+assert.deepStrictEqual(sum().learned, { day: 1, month: 1 }); act('wordKnown', {}, 6); assert.deepStrictEqual(sum(6).learned, { day: 1, month: 2 });
+
+// pomodoro
+const fp = sum(6).frogs[0]; assert.strictEqual(fp.est, 25);
+act('frogEst', { id: fp.id }, 6); assert.strictEqual(sum(6).frogs[0].est, 30);
+assert(act('frogStart', { id: fp.id }, 6).ok); assert(!act('frogStart', { id: fp.id }, 6).ok, 'one timer at a time');
+assert.strictEqual(focus.tick(at(6, 10)), null, 'still running');
+assert(/Помидор 30/.test(focus.tick(new Date(at(6).getTime() + 31 * 60e3)))); assert.strictEqual(sum(6).pomoToday, 1); assert.strictEqual(sum(6).frogs[0].pomo, 1); assert.strictEqual(sum(6).timer, null);
+act('frogStart', { id: fp.id }, 6); assert.strictEqual(focus.tick(at(6, 15)), null, 'stale timer dropped'); assert.strictEqual(sum(6).pomoToday, 1);
+act('frogStart', { id: fp.id }, 6); act('frogStop', {}, 6); assert.strictEqual(sum(6).timer, null);
+act('frogStart', { id: fp.id }, 6); act('frogToggle', { id: fp.id }, 6); assert.strictEqual(sum(6).timer, null, 'eaten frog stops its timer');
 
 // recommendations
 const R = focus.recommend, o = focus.opts({});
