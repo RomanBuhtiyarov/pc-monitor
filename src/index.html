@@ -354,13 +354,14 @@ function frogCtl(f, x) {   // pomodoro: length (click to change) + start / stop 
 const wordCtl = () => fzb('wordNext', '', '↻', 'gh', 'title="Другое слово"') + fzb('wordKnown', '', '✓', 'ok', 'title="Выучил — засчитать"');
 const sentenceRow = f => `<div class="fr">${reveal('sn', f.sentence)}${fzb('sentenceNext', '', '↻', 'gh', 'title="Другая фраза"')}</div>`;
 const counter = f => `<span class="cnt" title="Выучено слов: за день / за месяц">${f.learned.day}/${f.learned.month}</span>`;
-function goalDayBody(f) {   // widget: one goal and its next step
-  const g = f.goals.find(x => x.id === f.goalDay);
-  if (!g) return '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Цели">＋ добавить цель</button></div>';
-  const head = `<div class="fr"><span title="${esc(g.t)}"><b>${esc(g.t)}</b></span><span class="cnt" style="flex:none" title="Выполнено шагов">${g.done}/${g.total}</span></div>`;
-  const s = g.subs.find(x => x.id === g.next), gd = `data-goal="${esc(g.id)}"`;
-  if (s) return head + `<div class="fr">${fzb('subToggle', s.id, '', 'ck', gd + ' title="Шаг выполнен"')}<span title="${esc(s.t)}">${esc(s.t)}</span>${f.opts.frogs && !s.frog ? fzb('subToFrog', s.id, '🐸', 'gh', gd + ' title="Сделать лягушкой дня"') : ''}</div>`;
-  return head + (g.total ? '<div class="fr mt">все шаги выполнены ✓</div>' : '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Цели">＋ добавить первый шаг</button></div>');
+function goalsBody(f) {   // widget: every goal with its next step (goals and steps are added in the panel)
+  if (!f.goals.length) return '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Цели">＋ добавить цель</button></div>';
+  return f.goals.map(g => {
+    const all = g.total && !g.next;
+    const head = `<div class="fr ${all ? 'dn' : ''}"><span title="${esc(g.t)}"><b>${esc(g.t)}</b></span>${g.total ? `<span class="cnt" style="flex:none" title="Выполнено шагов">${all ? '✓ ' : ''}${g.done}/${g.total}</span>` : ''}</div>`;
+    const s = g.subs.find(x => x.id === g.next), gd = `data-goal="${esc(g.id)}"`;
+    return head + (s ? `<div class="fr">${fzb('subToggle', s.id, '', 'ck', gd + ' title="Шаг выполнен"')}<span title="${esc(s.t)}">${esc(s.t)}</span>${f.opts.frogs && !s.frog ? fzb('subToFrog', s.id, '🐸', 'gh', gd + ' title="Сделать лягушкой дня"') : ''}</div>` : '');
+  }).join('');
 }
 function focusStrip(f) {   // compact sections for the always-on-screen widget
   if (!f || !f.enabled) return '';
@@ -371,7 +372,7 @@ function focusStrip(f) {   // compact sections for the always-on-screen widget
   if (o.frogs) h += sec('🐸 Съесть лягушку', `<span class="cnt" title="Помидоров сегодня">🍅 ${f.pomoToday}</span>`,
     (f.frogs.length ? f.frogs.map(x => `<div class="fr ${x.done ? 'dn' : ''}">${fzb('frogToggle', x.id, x.done ? '✓' : '', 'ck')}<span title="${esc(x.t)}">${esc(x.t)}</span>${frogCtl(f, x)}</div>`).join('') : '<div class="fr mt">лягушки не выбраны</div>')
     + (f.frogs.length < o.frogsMax ? '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Съесть лягушку">＋ добавить лягушку</button></div>' : ''));
-  if (o.goals) h += sec('🎯 Цель дня', f.goalMany ? fzb('goalNext', '', '↻', 'gh', 'title="Другая цель"') : '', goalDayBody(f));
+  if (o.goals) h += sec('🎯 Цели дня', '', goalsBody(f));
   if (o.lang) { const g = f.habits.find(b => b.word); h += sec('🇩🇪 Изучаем язык', counter(f), `<div class="fr">${reveal('wd', f.word)}${wordCtl()}</div>${g ? `<div class="hbs">${hbt(g)}</div>` : ''}`); }
   const other = o.habits ? f.habits.filter(b => !b.word) : [];
   if (other.length) {
@@ -426,7 +427,7 @@ function focusSettings(f, open) {   // sits at the very bottom of the panel list
   const chk = (k, t) => `<label class="ss"><input type="checkbox" data-fset="${k}" ${o[k] ? 'checked' : ''} style="flex:none;width:14px"><span class="nm">${t}</span></label>`;
   const seg = (k, vals, unit) => `<div class="ss"><span class="nm">${unit[0]}</span><span class="seg">${vals.map(v => `<button class="${o[k] === v ? 'sel' : ''}" data-fsetv="${k}" data-v="${v}">${v}</button>`).join('')}</span></div>`;
   return `<details class="grp" data-k="fzset" ${open.has('fzset') ? 'open' : ''}><summary><span class="n">Настройки блока «Фокус»</span></summary>
-    ${chk('enabled', 'Показывать блок «Фокус»')}${chk('phrase', 'Мотиватор дня')}${chk('frogs', 'Съесть лягушку')}${chk('lang', 'Изучаем язык')}${chk('habits', 'Привычки')}${chk('goals', 'Цель дня и цели')}${chk('notify', 'Напоминание (уведомление Windows)')}
+    ${chk('enabled', 'Показывать блок «Фокус»')}${chk('phrase', 'Мотиватор дня')}${chk('frogs', 'Съесть лягушку')}${chk('lang', 'Изучаем язык')}${chk('habits', 'Привычки')}${chk('goals', 'Цели дня')}${chk('notify', 'Напоминание (уведомление Windows)')}
     ${seg('frogsMax', [1, 2, 3, 4, 5], ['Лягушек в день'])}${seg('remindHour', [10, 12, 14, 16, 18], ['Напоминать с, ч'])}</details>`;
 }
 const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];

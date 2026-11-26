@@ -21,7 +21,7 @@ const dayNum = d => Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const str = (s, n = LIM.text) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
 const minutes = v => Math.max(1, Math.min(240, Math.round(+v) || 15));
-const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], shift: { day: '', word: 0, phrase: 0, sentence: 0, goal: 0 }, notified: '', learned: {}, pomo: {}, timer: null });
+const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], shift: { day: '', word: 0, phrase: 0, sentence: 0 }, notified: '', learned: {}, pomo: {}, timer: null });
 
 function init(dir) {
   file = path.join(dir, 'focus.json'); db = fresh();
@@ -38,7 +38,7 @@ function init(dir) {
 function save() { if (file) try { fs.writeFileSync(file, JSON.stringify(db, null, 1)); } catch {} }
 const reset = () => { db = fresh(); };   // tests
 
-const shiftFor = now => { const k = dayKey(now); if (db.shift.day !== k) db.shift = { day: k, word: 0, phrase: 0, sentence: 0, goal: 0 }; return db.shift; };
+const shiftFor = now => { const k = dayKey(now); if (db.shift.day !== k) db.shift = { day: k, word: 0, phrase: 0, sentence: 0 }; return db.shift; };
 const streakOf = (h, now) => {
   let n = 0; const d = new Date(now);
   if (!h.days[dayKey(d)]) d.setDate(d.getDate() - 1);   // today not done yet: the streak is still alive until midnight
@@ -84,8 +84,6 @@ function summary(cfg, now = new Date()) {
     const done = g.subs.filter(s => s.done).length, nx = g.subs.find(s => !s.done);
     return { id: g.id, t: g.t, subs: g.subs.map(s => ({ id: s.id, t: s.t, done: !!s.done, frog: active.has(s.id) })), done, total: g.subs.length, pct: g.subs.length ? Math.round(done / g.subs.length * 100) : 0, next: nx ? nx.id : null };
   });
-  const unfinished = goals.filter(g => !g.total || g.next), pool = unfinished.length ? unfinished : goals;   // goal of the day: changes daily or on ↻
-  const goalDay = pool.length ? pool[(dayNum(now) + (shiftFor(now).goal || 0)) % pool.length].id : null;
   const raw = wordRaw(now).split('|');
   const ph = PHRASES[(dayNum(now) + shiftFor(now).phrase) % PHRASES.length].split('|');
   const sn = SENTENCES[(dayNum(now) + (shiftFor(now).sentence || 0)) % SENTENCES.length].split('|');
@@ -96,7 +94,7 @@ function summary(cfg, now = new Date()) {
     timer: db.timer, pomoToday: db.pomo[key] || 0,
     learned: { day: db.learned[key] || 0, month: Object.entries(db.learned).reduce((a, [k, n]) => a + (k.startsWith(key.slice(0, 7)) ? n : 0), 0) }, carry: carry.map(f => ({ id: f.id, t: f.t })),
     frogsWeek: db.frogs.filter(f => f.done && f.doneDay >= dayKey(weekAgo)).length,
-    habits, goals, goalDay, goalMany: pool.length > 1, word: { de: raw[0], ru: raw[1] }, phrase: { de: ph[0], ru: ph[1] }, sentence: { de: sn[0], ru: sn[1] }, rec,
+    habits, goals, word: { de: raw[0], ru: raw[1] }, phrase: { de: ph[0], ru: ph[1] }, sentence: { de: sn[0], ru: sn[1] }, rec,
   };
 }
 
@@ -193,7 +191,6 @@ function act(type, p, cfg, now = new Date()) {
     case 'wordKnown': { const w = wordRaw(now); if (!db.known.includes(w)) { db.known.push(w); db.learned[key] = (db.learned[key] || 0) + 1; } break; }
     case 'wordNext': shiftFor(now).word++; break;
     case 'sentenceNext': { const sh = shiftFor(now); sh.sentence = (sh.sentence || 0) + 1; break; }
-    case 'goalNext': { const sh = shiftFor(now); sh.goal = (sh.goal || 0) + 1; break; }
     case 'phraseNext': shiftFor(now).phrase++; break;
     default: return NO('Неизвестное действие');
   }
