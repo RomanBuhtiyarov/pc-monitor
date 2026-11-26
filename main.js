@@ -219,8 +219,8 @@ async function startSpeedTest() {
 ipcMain.handle('speedtest-start', () => { startSpeedTest(); return { ok: true }; });
 ipcMain.on('widget-size', (_e, h) => {
   if (!widget || widget.isDestroyed() || !Number.isFinite(h)) return;
-  h = Math.max(150, Math.min(420, Math.round(h)));
   const b = widget.getBounds(), wa = screen.getDisplayMatching(b).workArea;
+  h = Math.max(150, Math.min(wa.height - 16, Math.round(h)));   // as tall as the content needs, up to the screen (was a fixed 420 cap that clipped the bottom)
   if (b.height === h) return;
   const y = Math.max(wa.y, Math.min(b.y, wa.y + wa.height - h));   // keep the grown window on screen
   widget.setBounds({ x: b.x, y, width: b.width, height: h });
