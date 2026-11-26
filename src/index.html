@@ -10,6 +10,7 @@ html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px
 .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px currentColor;color:var(--ok)}
 .l1 .dot{background:var(--warn);color:var(--warn)}.l2 .dot{background:var(--crit);color:var(--crit)}
 .hd small{margin-left:auto;color:var(--mut);font-weight:400}
+.hd .ver{color:var(--mut);font-weight:400;font-size:10.5px}
 .row{display:grid;grid-template-columns:34px 1fr 40px;align-items:center;gap:8px}
 .row b{color:var(--mut);font-weight:500;font-size:11px}.row i{font-style:normal;text-align:right;font-variant-numeric:tabular-nums}
 .bar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
@@ -20,19 +21,20 @@ html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px
 .gauge .t{fill:var(--mut);font-size:7px;text-anchor:middle}
 #nd,#nu{transition:transform 1.2s cubic-bezier(.2,.8,.2,1)}
 .ctl{display:flex;flex-wrap:nowrap;gap:3px;justify-content:space-between;margin-top:-1px;height:18px;white-space:nowrap}
-.ctl button{white-space:nowrap}
+.ctl button{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:2px;height:18px}
+.ic{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .seg{display:inline-flex;gap:2px}
 .seg button{background:rgba(255,255,255,.07);color:var(--mut);padding:1px 7px;border-radius:5px;font-size:10px;line-height:1.3}
 .seg button:hover{background:rgba(255,255,255,.15)}
 .seg button.on{background:rgba(106,163,255,.28);color:var(--fg)}
 .res{height:66px;cursor:pointer}
-.ctl .tst,.ctl .rep{background:rgba(255,255,255,.08);color:var(--fg);padding:1px 7px;border-radius:5px;font-size:10px;line-height:1.3}
+.ctl .tst,.ctl .rep{background:rgba(255,255,255,.08);color:var(--fg);padding:0 5px;border-radius:5px;font-size:10px;line-height:1.3}
 .ctl .tst:hover,.ctl .rep:hover{background:rgba(255,255,255,.18)}
 .ctl .tst.run{color:#facc15}
 .ctl .rep.on{background:rgba(106,163,255,.28)}
 .ctl .rep[disabled]{opacity:.35;pointer-events:none}
 .ctl .mid{display:inline-flex;gap:3px}
-.seg button{padding:1px 6px}
+.seg button{padding:0 3px}
 .widget .card{cursor:grab}.widget .hd{-webkit-app-region:no-drag}
 /* CPU scanner strip (persistent node, not re-rendered) */
 #wtop{display:flex;flex-direction:column;gap:7px}
@@ -79,7 +81,7 @@ button{font:inherit;font-size:11px;border:0;border-radius:6px;padding:2px 8px;ba
 button:hover{background:rgba(239,68,68,.35)}
 .sus{border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.07)}
 .ss{display:flex;gap:8px;align-items:center;padding:2px 0}.ss .nm{flex:1}.ss .v{color:var(--mut)}
-.on{width:7px;height:7px;border-radius:50%;background:var(--ok)}.off{width:7px;height:7px;border-radius:50%;background:#555}
+span.on{width:7px;height:7px;border-radius:50%;background:var(--ok)}span.off{width:7px;height:7px;border-radius:50%;background:#555}
 .empty{color:var(--mut);padding:4px 0}
 /* Focus block */
 .fz{border-top:1px solid var(--line);padding-top:5px;display:flex;flex-direction:column;gap:3px;font-size:11px}
@@ -177,17 +179,37 @@ function barsSvg(bd, bu) {
   [['1K', 0], ['1M', .6], ['100M', 1]].forEach(([l, p]) => { g += `<text class="t" x="${16 + p * BARW}" y="62" style="text-anchor:${p === 0 ? 'start' : p === 1 ? 'end' : 'middle'}">${l}</text>`; });
   return `<svg class="gauge" width="206" height="66" viewBox="0 0 200 64">${g}</svg>`;
 }
-const netControls = st => `<div class="ctl"><span class="seg">${[['both', '↓↑', 'Скачивание и отправка'], ['rx', '↓', 'Только скачивание'], ['tx', '↑', 'Только отправка']].map(([v, t, h]) => `<button data-ch="${v}" title="${h}" class="${gCh === v ? 'on' : ''}">${t}</button>`).join('')}</span>${speedControls(st)}<span class="seg">${[['dial', '◔', 'Стрелка'], ['graph', '⌇', 'График'], ['bars', '▤', 'Полосы']].map(([v, t, h]) => `<button data-gs="${v}" title="${h}" class="${gStyle === v ? 'on' : ''}">${t}</button>`).join('')}</span></div>`;
+// 12px line icons (currentColor) for the widget's control row
+const svgIcon = d => `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true">${d}</svg>`;
+const IC = {
+  both: svgIcon('<path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5"/>'),
+  rx: svgIcon('<path d="M8 3v10M4 9l4 4 4-4"/>'),
+  tx: svgIcon('<path d="M8 13V3M4 7l4-4 4 4"/>'),
+  dial: svgIcon('<path d="M2 12a6 6 0 0 1 12 0M8 12l3-3.5"/>'),
+  duo: svgIcon('<path d="M1 11a3.2 3.2 0 0 1 6.4 0M4.2 11 5.6 8.8M8.6 11a3.2 3.2 0 0 1 6.4 0M11.8 11l1.4-2.2"/>'),
+  graph: svgIcon('<path d="M1.5 11.5 5 7l3 2.5 3-5.5 3.5 4"/>'),
+  bars: svgIcon('<path d="M2.5 5h11M2.5 11h6.5" stroke-width="2.6"/>'),
+  test: svgIcon('<path d="M9 1.8 3.8 9H8l-1 5.2L12.2 7H8z"/>'),
+  report: svgIcon('<path d="M4 2.5h8v11H4zM6 6h4M6 8.5h4M6 11h2.5"/>'),
+};
+const segBtns = (attr, sel, list) => `<span class="seg">${list.map(([v, h]) => `<button data-${attr}="${v}" title="${h}" aria-label="${h}" class="${sel === v ? 'on' : ''}">${IC[v]}</button>`).join('')}</span>`;
+const netControls = st => `<div class="ctl">${segBtns('ch', gCh, [['both', 'Скачивание и отправка'], ['rx', 'Только скачивание'], ['tx', 'Только отправка']])}${speedControls(st)}${segBtns('gs', gStyle, [['dial', 'Стрелка'], ['duo', 'Два датчика: вход и выход'], ['graph', 'График'], ['bars', 'Полосы']])}</div>`;
+// live speed on two analog dials: incoming and outgoing, same 1 KB/s .. 100 MB/s scale as the single dial
+const BYTE_TICKS = [[0, '1K'], [.2, '10K'], [.4, '100K'], [.6, '1M'], [.8, '10M'], [1, '100M']];
+function duoSvg(dDeg, uDeg) {
+  return `<svg class="gauge" width="212" height="66" viewBox="0 0 200 64">${miniDial(50, 'nd', dDeg, C_D, '↓ Вход', fmtB(avgOf('rx')), !showD(), BYTE_TICKS, 8)}${miniDial(150, 'nu', uDeg, C_U, '↑ Выход', fmtB(avgOf('tx')), !showU(), BYTE_TICKS, 8)}</svg>`;
+}
 // ---- internet speed test: two analog dials (download = "чтение", upload = "передача"), stage by stage ----
 let reportOpen = false, dismissedAt = 0, prevSD = 0, prevSU = 0;
 const posM = v => Math.max(0, Math.min(1, Math.log10(Math.max(v || 0, 1)) / 3));   // 1 .. 1000 Mbit/s, log scale
 const fmtMb = v => v == null ? '—' : (v >= 100 ? String(Math.round(v)) : v.toFixed(1).replace('.', ','));
 const ptc = (cx, cy, r, p) => { const a = Math.PI * (1 - p); return [cx + r * Math.cos(a), cy - r * Math.sin(a)]; };
-function miniDial(cx, id, deg, color, title, val, dim) {
+const MBIT_TICKS = [[0, '1'], [1 / 3, '10'], [2 / 3, '100'], [1, '1000']];
+function miniDial(cx, id, deg, color, title, val, dim, scale = MBIT_TICKS, titleY = 19) {
   const cy = 50, r = 29, [x1, y1] = ptc(cx, cy, r, 0), [x2, y2] = ptc(cx, cy, r, 1);
   let ticks = '';
-  [[0, '1'], [1 / 3, '10'], [2 / 3, '100'], [1, '1000']].forEach(([p, l]) => { const [a, b] = ptc(cx, cy, r - 1, p), [c, d] = ptc(cx, cy, r + 4, p), [tx, ty] = ptc(cx, cy, r + 9, p); ticks += `<line x1="${a}" y1="${b}" x2="${c}" y2="${d}" stroke="#8b91a0" stroke-width=".8"/><text class="t" style="font-size:5.5px" x="${tx}" y="${ty + 2}">${l}</text>`; });
-  return `<g opacity="${dim ? .35 : 1}"><text x="${cx}" y="19" text-anchor="middle" font-size="7.5" fill="${color}">${title}</text>
+  scale.forEach(([p, l]) => { const [a, b] = ptc(cx, cy, r - 1, p), [c, d] = ptc(cx, cy, r + 4, p), [tx, ty] = ptc(cx, cy, r + 9, p); ticks += `<line x1="${a}" y1="${b}" x2="${c}" y2="${d}" stroke="#8b91a0" stroke-width=".8"/><text class="t" style="font-size:5.5px" x="${tx}" y="${ty + 2}">${l}</text>`; });
+  return `<g opacity="${dim ? .35 : 1}"><text x="${cx}" y="${titleY}" text-anchor="middle" font-size="7.5" fill="${color}">${title}</text>
   <path d="M${x1} ${y1} A${r} ${r} 0 0 1 ${x2} ${y2}" stroke="${color}" stroke-width="3.5" fill="none" stroke-linecap="round" opacity=".35"/>${ticks}
   <g id="${id}" style="transform-origin:${cx}px ${cy}px;transform:rotate(${deg}deg);transition:transform 1s cubic-bezier(.2,.8,.2,1)"><line x1="${cx}" y1="${cy}" x2="${cx - 25}" y2="${cy}" stroke="${color}" stroke-width="1.8" stroke-linecap="round"/></g>
   <circle cx="${cx}" cy="${cy}" r="3" fill="${color}"/><text x="${cx}" y="62" text-anchor="middle" font-size="8.5" fill="${C_D}">${val}</text></g>`;
@@ -211,7 +233,7 @@ function speedView(st) {
 }
 // leave the speed-test view (also used when the user picks another indicator style/channel)
 function closeSpeed() { const st = lastD && lastD.speedtest; if (st && !st.running) { dismissedAt = st.result ? st.result.at : 0; reportOpen = false; } }
-const speedControls = st => `<span class="mid"><button class="tst ${st.running ? 'run' : ''}" data-speed="1" ${st.running ? 'disabled' : ''} title="Тест скорости интернета (пинг, скачивание, отправка)">${st.running ? '⏳ Тест' : '⚡ Тест'}</button><button class="rep ${reportOpen ? 'on' : ''}" data-report="1" ${st.result ? '' : 'disabled'} title="Отчёт последнего теста">📋</button></span>`;
+const speedControls = st => `<span class="mid"><button class="tst ${st.running ? 'run' : ''}" data-speed="1" ${st.running ? 'disabled' : ''} title="Тест скорости интернета (пинг, скачивание, отправка)">${IC.test}Тест</button><button class="rep ${reportOpen ? 'on' : ''}" data-report="1" ${st.result ? '' : 'disabled'} title="Отчёт последнего теста" aria-label="Отчёт последнего теста">${IC.report}</button></span>`;
 const HIST_TIME = t => new Date(t).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 function speedBlock(st) {
   st = st || {};
@@ -445,13 +467,13 @@ function render(d) {
     const showSpeed = st.running || (st.result && ((reportOpen) || (st.result.at !== dismissedAt && Date.now() - st.result.at < 25000)));
     const sv = showSpeed ? speedView(st) : null;
     const pd = posOf(avgOf('rx')), pu = posOf(avgOf('tx'));
-    const ind = sv ? `<div class="res" data-dismiss="1">${sv.html}</div>` : gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : dialSvg(prevD, prevU);
+    const ind = sv ? `<div class="res" data-dismiss="1">${sv.html}</div>` : gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : gStyle === 'duo' ? duoSvg(prevD, prevU) : dialSvg(prevD, prevU);
     $('#w').className = 'card l' + level;
-    $('#wtop').innerHTML = `<div class="hd"><span class="dot"></span>PC Monitor<small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}${focusStrip(d.focus)}`;
+    $('#wtop').innerHTML = `<div class="hd"><span class="dot"></span>PC Monitor<span class="ver">v${esc(d.version || '')}</span><small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}${focusStrip(d.focus)}`;
     updateScan(d);
     const anim = (el, fn) => { if (el) { el.getBoundingClientRect(); fn(el); } };   // reflow first so the CSS transition runs from the previous value
     if (sv) { anim($('#sd'), e => { e.style.transform = `rotate(${sv.tgtD}deg)`; }); anim($('#su'), e => { e.style.transform = `rotate(${sv.tgtU}deg)`; }); prevSD = sv.tgtD; prevSU = sv.tgtU; }
-    if (!sv && gStyle === 'dial') { anim($('#nd'), e => { e.style.transform = `rotate(${pd * 180}deg)`; }); anim($('#nu'), e => { e.style.transform = `rotate(${pu * 180}deg)`; }); }
+    if (!sv && (gStyle === 'dial' || gStyle === 'duo')) { anim($('#nd'), e => { e.style.transform = `rotate(${pd * 180}deg)`; }); anim($('#nu'), e => { e.style.transform = `rotate(${pu * 180}deg)`; }); }
     if (!sv && gStyle === 'bars') { anim($('#bd'), e => { e.style.width = pd * BARW + 'px'; }); anim($('#bu'), e => { e.style.width = pu * BARW + 'px'; }); }
     prevD = pd * 180; prevU = pu * 180; prevBD = pd; prevBU = pu;
     // fit the window to the content so no mode (dial, graph, speed test...) can clip the bottom row
