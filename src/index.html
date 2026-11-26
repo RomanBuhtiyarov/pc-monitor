@@ -107,6 +107,10 @@ button.tx,.fr button.tx{flex:1;min-width:0;background:none;color:var(--fg);paddi
 button.tx b{display:block;font-weight:600}button.tx span{display:block;color:var(--mut)}
 button.run{background:rgba(250,204,21,.2);color:#facc15;font-variant-numeric:tabular-nums}button.run:hover{background:rgba(250,204,21,.35)}
 .pm{color:var(--mut);white-space:nowrap}
+#w{position:relative}
+.boot{position:absolute;inset:0;z-index:5;background:#181a20;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:0 22px;cursor:grab}
+.boot b{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}.boot .bar{width:100%}.boot .bar span{background:var(--acc);width:1%;transition:width .1s linear}
+.boot small{color:var(--mut);text-align:center;min-height:15px}
 .seg button.sel{background:rgba(106,163,255,.28);color:var(--fg)}
 </style></head>
 <body><div id="app"></div>
@@ -277,8 +281,24 @@ function spendBlock(sp, keys, bud) {
 const cpuHist = [], HN = 60, SNOOZE_MS = 30 * 60000, snooze = new Map();
 let lastAnalysisAt = 0, hogKey = null;
 const fmtScan = s => s < 60 ? s + ' с' : s / 60 + ' мин';
+// ---- start-up screen: 1..100% while the first readings arrive (main process reports which are ready) ----
+const BOOT = [['metrics', 'процессор, память, сеть', 30], ['disk', 'диски', 20], ['gpu', 'видеокарту', 20], ['procs', 'процессы', 30]];
+let bootState = {}, bootPct = 1, bootTimer = 0, bootFrom = Date.now();
+function bootStep() {
+  const el = $('#boot'); if (!el) { clearInterval(bootTimer); return; }
+  const done = BOOT.reduce((a, [k, , w]) => a + (bootState[k] ? w : 0), 0), pend = BOOT.find(([k]) => !bootState[k]);
+  const all = !pend || Date.now() - bootFrom > 25000;   // never hang on a sensor that does not answer
+  if (all) bootPct = Math.min(100, bootPct + 5);
+  else if (bootPct < done) bootPct = Math.min(done, bootPct + 3);
+  else bootPct += (Math.min(99, done + pend[2] * .9) - bootPct) * .03;   // creep while the current reading is in progress
+  const n = Math.max(1, Math.floor(bootPct));
+  $('#bootn').textContent = n + '%'; $('#bootb').style.width = n + '%';
+  $('#boots').textContent = all ? 'Готово' : 'Считываю ' + pend[1] + '…';
+  if (n >= 100) { clearInterval(bootTimer); setTimeout(() => el.remove(), 250); }
+}
 function buildWidget() {
-  $('#app').innerHTML = `<div class="card l0" id="w"><div id="wtop"></div><div class="scan" id="scan"><div class="sc-gr"><svg viewBox="0 0 200 24" preserveAspectRatio="none"><path id="sca" fill="none"/><path id="scp" fill="none" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg><div class="beam"></div><span id="scn"></span></div><div class="sc-ft"><span id="scl">CPU —</span><label title="Как часто проверять процессы">Проверка CPU <select id="scsel"></select></label></div><div id="hog"></div></div></div>`;
+  $('#app').innerHTML = `<div class="card l0" id="w"><div id="wtop"></div><div class="scan" id="scan"><div class="sc-gr"><svg viewBox="0 0 200 24" preserveAspectRatio="none"><path id="sca" fill="none"/><path id="scp" fill="none" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg><div class="beam"></div><span id="scn"></span></div><div class="sc-ft"><span id="scl">CPU —</span><label title="Как часто проверять процессы">Проверка CPU <select id="scsel"></select></label></div><div id="hog"></div></div><div class="boot" id="boot"><span>PC Monitor</span><b id="bootn">1%</b><div class="bar"><span id="bootb"></span></div><small id="boots">Запуск…</small></div></div>`;
+  bootFrom = Date.now(); bootTimer = setInterval(bootStep, 100);
   $('#scsel').addEventListener('change', e => api.setScanInterval(+e.target.value));
   $('#hog').addEventListener('click', e => { const b = e.target.closest('button[data-later]'); if (b) { snooze.set(+b.dataset.later, Date.now() + SNOOZE_MS); hogKey = null; if (lastD) updateScan(lastD); } });
 }
@@ -401,6 +421,8 @@ function render(d) {
   const { stats: s, level, worst, analysis: a, cfg, usage: us } = d, c = cfg;
   const m = metric('CPU', s.cpu, c) + metric('RAM', s.ram, c) + metric('GPU', s.gpu, c) + metric('Диск', s.disk, { warn: 85, crit: 95 });
   if (view === 'widget') {
+    bootState = d.boot || bootState;
+    if (bootPct < 2 && Date.now() - bootFrom < 800 && BOOT.every(([k]) => bootState[k])) { const el = $('#boot'); if (el) el.remove(); }   // re-created widget: everything is already known
     if (d.seq !== lastSeq) { pushSample(s.rx, s.tx); lastSeq = d.seq; }
     const st = d.speedtest || {};
     const showSpeed = st.running || (st.result && ((reportOpen) || (st.result.at !== dismissedAt && Date.now() - st.result.at < 25000)));

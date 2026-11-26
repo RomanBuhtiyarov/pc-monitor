@@ -78,7 +78,9 @@ function focusRemind() {   // once a day, only when something is urgent; no extr
   const done = focus.tick(), t = done || focus.reminder(cfg); if (!t) return;
   const n = new Notification({ title: done ? '🍅 Помидор' : 'Фокус', body: t }); n.on('click', () => { if (!panel || panel.isDestroyed()) togglePanel(); }); n.show();
 }
-const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), focus: focus.summary(cfg), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
+const boot = { metrics: false, disk: false, gpu: false, procs: false };   // first readings after start, shown as % in the widget
+const booted = k => { if (!boot[k]) { boot[k] = true; broadcast(); } };
+const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { boot, stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), focus: focus.summary(cfg), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
 
 async function fastTick() {
   try {
@@ -86,26 +88,27 @@ async function fastTick() {
     stats.cpu = l.currentLoad; stats.ram = (m.total - m.available) / m.total * 100;
     stats.ramUsedGB = (m.total - m.available) / 2 ** 30; stats.ramTotalGB = m.total / 2 ** 30;
     stats.rx = n.reduce((a, x) => a + (x.rx_sec || 0), 0); stats.tx = n.reduce((a, x) => a + (x.tx_sec || 0), 0);
-    statsSeq++; prevLevel = level; evaluate(); updateTray(); maybeNotify(); focusRemind(); broadcast();
+    boot.metrics = true; statsSeq++; prevLevel = level; evaluate(); updateTray(); maybeNotify(); focusRemind(); broadcast();
   } catch {}
   setTimeout(fastTick, visible(widget) || visible(panel) ? 2000 : 5000);
 }
 async function diskTick() {
   try { const d = await si.fsSize(); const sys = d.find(x => x.mount && x.mount.toUpperCase().startsWith((process.env.SystemDrive || 'C:').toUpperCase())) || d[0]; if (sys) stats.disk = sys.use; } catch {}
+  booted('disk');
   setTimeout(diskTick, 60000);
 }
 function gpuTick() {
   execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', String.raw`(Get-Counter '\GPU Engine(*)\Utilization Percentage' -ErrorAction Stop).CounterSamples | Where-Object {$_.InstanceName -match 'engtype_(3D|Compute|VideoDecode|VideoEncode)'} | Group-Object { $_.InstanceName -replace '^pid_\d+_','' } | ForEach-Object { ($_.Group | Measure-Object CookedValue -Sum).Sum } | Measure-Object -Maximum | ForEach-Object Maximum`],
     { windowsHide: true, timeout: 10000 }, (e, out) => {
       const v = parseFloat(String(out).replace(',', '.'));
-      stats.gpu = !e && isFinite(v) ? Math.min(100, v) : null;
+      stats.gpu = !e && isFinite(v) ? Math.min(100, v) : null; booted('gpu');
       setTimeout(gpuTick, visible(widget) || visible(panel) ? 5000 : 20000);
     });
 }
 async function scanTick() {
   if (scanning) return; scanning = true;
   try { analysis = await scan(cfg); lastScan = Date.now(); broadcast(); } catch (e) { console.error(e); }
-  scanning = false;
+  scanning = false; booted('procs');
 }
 function scanLoop() { // 6s while panel is open, otherwise at the CPU scanner interval chosen in the widget
   if (Date.now() - lastScan > (visible(panel) ? 6000 : scanSec() * 1000)) scanTick();
@@ -120,7 +123,7 @@ function createWidget() {
   widget.setAlwaysOnTop(true, 'screen-saver');   // stay above the taskbar and other topmost windows
   widget.loadFile(path.join(__dirname, 'src', 'index.html'), { query: { view: 'widget' } });
   widget.webContents.on('render-process-gone', () => { if (widget && !widget.isDestroyed()) widget.reload(); });
-  widget.once('ready-to-show', () => widget.showInactive());
+  widget.once('ready-to-show', () => { widget.showInactive(); broadcast(); });
   widget.on('moved', () => { const [x, y] = widget.getPosition(); cfg.widgetPos = { x, y }; saveCfg(); });
   widget.on('closed', () => { widget = null; });
 }
