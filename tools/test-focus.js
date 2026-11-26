@@ -31,6 +31,11 @@ assert(act('edit', { kind: 'frog', id: sum().frogs[0].id, t: 'Новая A' }).o
 assert(!act('edit', { kind: 'sub', goalId: g.id, id: 'nope', t: 'x' }).ok);
 act('subMove', { goalId: g.id, id: g.subs[1].id, dir: -1 }); assert.strictEqual(sum().goals[0].subs[0].t, 'Выучить 200 слов');
 
+// goal of the day: unfinished goals take turns
+assert.strictEqual(sum().goalDay, g.id); assert(!sum().goalMany);
+act('goalAdd', { t: 'Вторая цель' }); const d1 = sum().goalDay; assert(sum().goalMany); act('goalNext', {}); assert.notStrictEqual(sum().goalDay, d1);
+act('goalRemove', { id: sum().goals[1].id }); assert.strictEqual(sum().goalDay, g.id);
+
 // habits: streak, edit, add/remove
 const de = sum().habits[0]; assert.strictEqual(de.t, 'Немецкий'); assert(de.word);
 for (const d of [3, 4, 5]) act('habitToggle', { id: de.id }, d);
