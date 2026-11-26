@@ -151,7 +151,7 @@ function ensureWidget(force) {
 }
 function setFocusOpt(k, v) { const o = focus.opts(cfg); cfg.focus = { ...o, [k]: v, enabled: k === 'enabled' ? v : v || o.enabled }; saveCfg(); broadcast(); }
 // what the monitor shows: used by the tray menu and the widget's right-click menu
-const focusMenu = () => { const o = focus.opts(cfg); return [['phrase', 'Мотиватор дня'], ['frogs', 'Съесть лягушку'], ['lang', 'Изучаем язык']].map(([k, label]) => ({ label, type: 'checkbox', checked: o.enabled && o[k], click: i => setFocusOpt(k, i.checked) })); };
+const focusMenu = () => { const o = focus.opts(cfg); return [['phrase', 'Мотиватор дня'], ['frogs', 'Съесть лягушку'], ['lang', 'Изучаем язык'], ['habits', 'Привычки']].map(([k, label]) => ({ label, type: 'checkbox', checked: o.enabled && o[k], click: i => setFocusOpt(k, i.checked) })); };
 function buildMenu() {
   return Menu.buildFromTemplate([
     { label: `PC Monitor v${app.getVersion()}`, enabled: false },
