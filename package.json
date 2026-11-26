@@ -1,6 +1,6 @@
 {
   "name": "pc-monitor",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Desktop widget showing live PC stats on Windows",
   "main": "main.js",
   "scripts": {
