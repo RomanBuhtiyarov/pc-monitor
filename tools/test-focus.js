@@ -43,6 +43,11 @@ assert(act('edit', { kind: 'habit', id: de.id, t: 'Deutsch', min: 20 }).ok); ass
 assert(act('habitAdd', { t: 'Английский', min: 10 }).ok && sum().habits.length === 2);
 act('habitRemove', { id: sum().habits[1].id }); assert.strictEqual(sum().habits.length, 1);
 
+// a «phrases» habit gets a German sentence that can be changed
+act('habitAdd', { t: 'Немецкие фразы' }); assert(sum().habits[1].phrases && !sum().habits[0].phrases);
+const s1 = sum().sentence.de; assert(sum().sentence.ru); act('sentenceNext', {}); assert.notStrictEqual(sum().sentence.de, s1);
+act('habitRemove', { id: sum().habits[1].id });
+
 // carry-over of unfinished frogs
 const open = sum(5).frogs.find(f => !f.done);
 const next = sum(6); assert(next.carry.some(c => c.id === open.id) && next.frogs.length === 0);

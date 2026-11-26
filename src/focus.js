@@ -1,7 +1,8 @@
 // Focus block: frogs of the day, daily habits (German by default), goals with subtasks, motivation.
 // Local only: state lives in focus.json next to settings.json. All input is validated here (main process).
 const fs = require('fs'), path = require('path');
-const { WORDS, PHRASES } = require('./focus-data');
+const { WORDS, PHRASES, SENTENCES } = require('./focus-data');
+const isPhraseHabit = h => /фраз|phrase|satz|sätze/i.test(h.t);   // such a habit button opens a German sentence
 
 const EST = [15, 20, 25, 30, 40];   // pomodoro length choices for a frog, minutes
 const LIM = { goals: 20, subs: 50, habits: 8, text: 120, keepDays: 60 };
@@ -20,7 +21,7 @@ const dayNum = d => Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const str = (s, n = LIM.text) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
 const minutes = v => Math.max(1, Math.min(240, Math.round(+v) || 15));
-const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], shift: { day: '', word: 0, phrase: 0 }, notified: '', learned: {}, pomo: {}, timer: null });
+const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], shift: { day: '', word: 0, phrase: 0, sentence: 0 }, notified: '', learned: {}, pomo: {}, timer: null });
 
 function init(dir) {
   file = path.join(dir, 'focus.json'); db = fresh();
@@ -37,7 +38,7 @@ function init(dir) {
 function save() { if (file) try { fs.writeFileSync(file, JSON.stringify(db, null, 1)); } catch {} }
 const reset = () => { db = fresh(); };   // tests
 
-const shiftFor = now => { const k = dayKey(now); if (db.shift.day !== k) db.shift = { day: k, word: 0, phrase: 0 }; return db.shift; };
+const shiftFor = now => { const k = dayKey(now); if (db.shift.day !== k) db.shift = { day: k, word: 0, phrase: 0, sentence: 0 }; return db.shift; };
 const streakOf = (h, now) => {
   let n = 0; const d = new Date(now);
   if (!h.days[dayKey(d)]) d.setDate(d.getDate() - 1);   // today not done yet: the streak is still alive until midnight
@@ -77,7 +78,7 @@ function summary(cfg, now = new Date()) {
   const key = dayKey(now), weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 6);
   const frogs = db.frogs.filter(f => f.day === key);
   const carry = db.frogs.filter(f => f.day < key && !f.done);
-  const habits = db.habits.map(h => ({ id: h.id, t: h.t, min: h.min, word: !!h.word, doneToday: !!h.days[key], streak: streakOf(h, now), total: Object.keys(h.days).length, week: weekOf(h, now) }));
+  const habits = db.habits.map(h => ({ id: h.id, t: h.t, min: h.min, word: !!h.word, phrases: isPhraseHabit(h), doneToday: !!h.days[key], streak: streakOf(h, now), total: Object.keys(h.days).length, week: weekOf(h, now) }));
   const active = new Set(frogs.filter(f => !f.done).map(f => f.subId).filter(Boolean));
   const goals = db.goals.map(g => {
     const done = g.subs.filter(s => s.done).length, nx = g.subs.find(s => !s.done);
@@ -85,6 +86,7 @@ function summary(cfg, now = new Date()) {
   });
   const raw = wordRaw(now).split('|');
   const ph = PHRASES[(dayNum(now) + shiftFor(now).phrase) % PHRASES.length].split('|');
+  const sn = SENTENCES[(dayNum(now) + (shiftFor(now).sentence || 0)) % SENTENCES.length].split('|');
   const rec = recommend({ frogs, carry, habits, goals }, o, now.getHours());
   return {
     opts: o, enabled: o.enabled, day: key,
@@ -92,7 +94,7 @@ function summary(cfg, now = new Date()) {
     timer: db.timer, pomoToday: db.pomo[key] || 0,
     learned: { day: db.learned[key] || 0, month: Object.entries(db.learned).reduce((a, [k, n]) => a + (k.startsWith(key.slice(0, 7)) ? n : 0), 0) }, carry: carry.map(f => ({ id: f.id, t: f.t })),
     frogsWeek: db.frogs.filter(f => f.done && f.doneDay >= dayKey(weekAgo)).length,
-    habits, goals, word: { de: raw[0], ru: raw[1] }, phrase: { de: ph[0], ru: ph[1] }, rec,
+    habits, goals, word: { de: raw[0], ru: raw[1] }, phrase: { de: ph[0], ru: ph[1] }, sentence: { de: sn[0], ru: sn[1] }, rec,
   };
 }
 
@@ -188,6 +190,7 @@ function act(type, p, cfg, now = new Date()) {
     case 'habitToggle': { const h = db.habits.find(x => x.id === p.id); if (!h) return NO('Не найдено'); if (h.days[key]) delete h.days[key]; else h.days[key] = true; break; }
     case 'wordKnown': { const w = wordRaw(now); if (!db.known.includes(w)) { db.known.push(w); db.learned[key] = (db.learned[key] || 0) + 1; } break; }
     case 'wordNext': shiftFor(now).word++; break;
+    case 'sentenceNext': { const sh = shiftFor(now); sh.sentence = (sh.sentence || 0) + 1; break; }
     case 'phraseNext': shiftFor(now).phrase++; break;
     default: return NO('Неизвестное действие');
   }

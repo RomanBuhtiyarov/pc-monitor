@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen, dialog, Notification, shell, powerMonitor } = require('electron');
-const path = require('path'), fs = require('fs');
+const path = require('path'), fs = require('fs'), os = require('os');
 const { execFile } = require('child_process');
 const si = require('systeminformation');
 const { scan, PROTECTED } = require('./src/procs');
@@ -82,18 +82,26 @@ const boot = { metrics: false, disk: false, gpu: false, procs: false };   // fir
 const booted = k => { if (!boot[k]) { boot[k] = true; broadcast(); } };
 const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { boot, stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), focus: focus.summary(cfg), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
 
+// CPU, RAM, network and disk must not go through PowerShell: on a busy PC those queries can hang for tens of seconds
+// and freeze the whole loop (empty CPU graph, 0 B/s). RAM and disk come from Node, network totals from netstat.
+let netPrev = null;
+const netBytes = () => new Promise(res => execFile('netstat', ['-e'], { windowsHide: true, timeout: 4000 }, (e, out) => {
+  const m = !e && String(out).match(/^\D*?\s(\d+)\s+(\d+)\s*$/m); res(m ? { rx: +m[1], tx: +m[2], t: Date.now() } : null);
+}));
+const rate = (now, was, sec) => { let d = now - was; if (d < 0) d = was < 2 ** 32 ? d + 2 ** 32 : 0; return sec > 0 ? d / sec : 0; };   // 32-bit counters wrap
 async function fastTick() {
   try {
-    const [l, m, n] = await Promise.all([si.currentLoad(), si.mem(), si.networkStats()]);
-    stats.cpu = l.currentLoad; stats.ram = (m.total - m.available) / m.total * 100;
-    stats.ramUsedGB = (m.total - m.available) / 2 ** 30; stats.ramTotalGB = m.total / 2 ** 30;
-    stats.rx = n.reduce((a, x) => a + (x.rx_sec || 0), 0); stats.tx = n.reduce((a, x) => a + (x.tx_sec || 0), 0);
-    boot.metrics = true; statsSeq++; prevLevel = level; evaluate(); updateTray(); maybeNotify(); focusRemind(); broadcast();
-  } catch {}
-  setTimeout(fastTick, visible(widget) || visible(panel) ? 2000 : 5000);
+    const [l, n] = await Promise.all([si.currentLoad(), netBytes()]);
+    const total = os.totalmem(), used = total - os.freemem();
+    stats.cpu = l.currentLoad; stats.ram = used / total * 100; stats.ramUsedGB = used / 2 ** 30; stats.ramTotalGB = total / 2 ** 30;
+    if (n) { if (netPrev) { const sec = (n.t - netPrev.t) / 1000; stats.rx = rate(n.rx, netPrev.rx, sec); stats.tx = rate(n.tx, netPrev.tx, sec); } netPrev = n; }
+    statsSeq++; if (statsSeq >= 2) boot.metrics = true;   // two samples: network speed and the CPU graph need both
+    prevLevel = level; evaluate(); updateTray(); maybeNotify(); focusRemind(); broadcast();
+  } catch (e) { console.error(e); }
+  setTimeout(fastTick, !boot.metrics ? 1000 : visible(widget) || visible(panel) ? 2000 : 5000);
 }
 async function diskTick() {
-  try { const d = await si.fsSize(); const sys = d.find(x => x.mount && x.mount.toUpperCase().startsWith((process.env.SystemDrive || 'C:').toUpperCase())) || d[0]; if (sys) stats.disk = sys.use; } catch {}
+  try { const s = await fs.promises.statfs((process.env.SystemDrive || 'C:') + '\\'); stats.disk = (1 - s.bfree / s.blocks) * 100; } catch {}
   booted('disk');
   setTimeout(diskTick, 60000);
 }
