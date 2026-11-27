@@ -7,13 +7,15 @@ const usage = require('./src/usage');
 const providers = require('./src/providers');
 const speedtest = require('./src/speedtest');
 const focus = require('./src/focus');
+const ports = require('./src/ports');
+const disk = require('./src/disk');
 
 app.disableHardwareAcceleration();           // fewer GPU-process resources
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=64');
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('local.pcmonitor');
 
-const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true, scanSec: 60, hogCpu: 30, hogMinSec: 60, focus: { ...focus.OPT_DEFAULTS }, budgets: { claude5h: 0, claudeDay: 0, claudeWeek: 0, anthropicMonth: 0, openaiMonth: 0 } };
+const DEFAULTS = { warn: 70, crit: 90, diskWarn: 85, diskCrit: 95, widget: true, widgetPos: null, projectRoots: ['D:\\project_hub'], notify: true, scanSec: 60, speedSrc: 'net', hogCpu: 30, hogMinSec: 60, focus: { ...focus.OPT_DEFAULTS }, budgets: { claude5h: 0, claudeDay: 0, claudeWeek: 0, anthropicMonth: 0, openaiMonth: 0 } };
 let cfgFile, cfg = { ...DEFAULTS };
 const saveCfg = () => { try { fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2)); } catch {} };
 
@@ -80,7 +82,10 @@ function focusRemind() {   // once a day, only when something is urgent; no extr
 }
 const boot = { metrics: false, disk: false, gpu: false, procs: false };   // first readings after start, shown as % in the widget
 const booted = k => { if (!boot[k]) { boot[k] = true; broadcast(); } };
-const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { boot, stats, level, worst, analysis, seq: statsSeq, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), focus: focus.summary(cfg), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS } }); };
+// what the speed indicator shows; typeperf runs only while the disk is selected and the widget is on screen
+const speedSrc = () => cfg.speedSrc === 'disk' ? 'disk' : 'net';
+const syncDisk = () => disk.sync(speedSrc() === 'disk' && visible(widget));
+const broadcast = () => { for (const w of [widget, panel]) if (visible(w)) w.webContents.send('stats', { boot, stats, level, worst, analysis, seq: statsSeq, io: disk.state, speedtest: speed, version: app.getVersion(), usage: usage.summary(), spend: providers.summary(), keys: providers.status(), focus: focus.summary(cfg), cfg: { warn: cfg.warn, crit: cfg.crit, budgets: cfg.budgets, scanSec: scanSec(), scanSteps: SCAN_STEPS, speedSrc: speedSrc() } }); };
 
 // CPU, RAM, network and disk must not go through PowerShell: on a busy PC those queries can hang for tens of seconds
 // and freeze the whole loop (empty CPU graph, 0 B/s). RAM and disk come from Node, network totals from netstat.
@@ -95,6 +100,7 @@ async function fastTick() {
     const total = os.totalmem(), used = total - os.freemem();
     stats.cpu = l.currentLoad; stats.ram = used / total * 100; stats.ramUsedGB = used / 2 ** 30; stats.ramTotalGB = total / 2 ** 30;
     if (n) { if (netPrev) { const sec = (n.t - netPrev.t) / 1000; stats.rx = rate(n.rx, netPrev.rx, sec); stats.tx = rate(n.tx, netPrev.tx, sec); } netPrev = n; }
+    syncDisk();
     statsSeq++; if (statsSeq >= 2) boot.metrics = true;   // two samples: network speed and the CPU graph need both
     prevLevel = level; evaluate(); updateTray(); maybeNotify(); focusRemind(); broadcast();
   } catch (e) { console.error(e); }
@@ -181,13 +187,19 @@ function buildMenu() {
 }
 
 // ---------- IPC ----------
-ipcMain.handle('kill', async (_e, { pid, name, memMB, project, cpu }) => {
+ipcMain.handle('kill', async (_e, { pid, name, memMB, project, cpu, port }) => {
+  if (port != null) {   // from the ports list: only an owner the last scan reported there, and never a locked one
+    const e = analysis && (analysis.ports || []).find(x => x.port === port && x.pid === pid);
+    if (!e || e.lock) return { ok: false, msg: e ? 'Этот процесс не завершается из программы' : 'Список портов устарел' };
+    name = e.name; memMB = e.memMB; project = e.project;
+  }
   if (!Number.isInteger(pid) || pid <= 4 || pid === process.pid || PROTECTED.test(String(name))) return { ok: false, msg: 'Системный процесс — защищён' };
   killing = true;
   const r = await dialog.showMessageBox({ type: 'warning', buttons: ['Завершить', 'Отмена'], defaultId: 1, cancelId: 1, title: 'Завершить процесс?',
-    message: `${name} (PID ${pid})`, detail: `${Number.isFinite(cpu) ? 'CPU: ' + cpu + '%\n' : ''}Память: ${memMB} МБ${project ? '\nПроект: ' + project : ''}\n\nПроцесс и его дочерние процессы будут принудительно закрыты. Несохранённые данные будут потеряны.` });
+    message: `${name} (PID ${pid})`, detail: `${port != null ? 'Занимает порт ' + port + '\n' : ''}${Number.isFinite(cpu) ? 'CPU: ' + cpu + '%\n' : ''}Память: ${memMB} МБ${project ? '\nПроект: ' + project : ''}\n\nПроцесс и его дочерние процессы будут принудительно закрыты. Несохранённые данные будут потеряны.` });
   killing = false;
   if (r.response !== 0) return { ok: false, msg: 'Отменено' };
+  if (port != null && !(await ports.listening()).some(x => x.port === port && x.pid === pid)) { scanTick(); return { ok: false, msg: 'Порт уже освобождён или занят другим процессом' }; }
   return new Promise(res => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, e => { setTimeout(scanTick, 800); res({ ok: !e, msg: e ? 'Не удалось завершить' : 'Завершён' }); }));
 });
 let dragOff = null;
@@ -241,6 +253,11 @@ ipcMain.on('widget-size', (_e, h) => {
   widget.setBounds({ x: b.x, y, width: b.width, height: h });
   if (dragOff) dragOff.h = h;
 });
+ipcMain.handle('speed-source', (_e, src) => {
+  if (src !== 'net' && src !== 'disk') return { ok: false };
+  cfg.speedSrc = src; saveCfg(); syncDisk(); broadcast();
+  return { ok: true };
+});
 ipcMain.handle('scan-interval', (_e, sec) => {
   if (!SCAN_STEPS.includes(sec)) return { ok: false };
   cfg.scanSec = sec; saveCfg(); broadcast();
@@ -252,6 +269,7 @@ ipcMain.handle('focus-settings', (_e, p = {}) => {
   for (const k of ['enabled', 'frogs', 'lang', 'habits', 'goals', 'phrase', 'notify']) if (typeof p[k] === 'boolean') n[k] = p[k];
   if (p.frogsMax != null) n.frogsMax = p.frogsMax;
   if (p.remindHour != null) n.remindHour = p.remindHour;
+  if (p.newPerDay != null) n.newPerDay = p.newPerDay;
   cfg.focus = focus.opts({ focus: n }); saveCfg(); broadcast(); return { ok: true };
 });
 ipcMain.on('open-panel', togglePanel);
@@ -281,4 +299,5 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', e => e.preventDefault());   // live in the tray
 app.on('second-instance', togglePanel);
-app.on('before-quit', () => usage.save());
+app.on('before-quit', () => { usage.save(); disk.stop(); });
+process.on('exit', () => disk.stop());

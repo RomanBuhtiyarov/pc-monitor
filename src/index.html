@@ -17,6 +17,7 @@ html,body{height:100%;padding:0;background:transparent;overflow:hidden;font:12px
 .bar span{display:block;height:100%;width:0;border-radius:3px;background:var(--ok);transition:width .4s,background .3s}
 .net{display:flex;justify-content:space-between;color:var(--mut);font-variant-numeric:tabular-nums;font-size:11.5px}
 .net em{font-style:normal;color:var(--fg)}
+.widget .net{align-items:center}.widget .net .sv{flex:1;min-width:0;white-space:nowrap}.widget .net .sv:last-child{text-align:right}
 .gauge{display:block;margin:0 auto}
 .gauge .t{fill:var(--mut);font-size:7px;text-anchor:middle}
 #nd,#nu{transition:transform 1.2s cubic-bezier(.2,.8,.2,1)}
@@ -83,6 +84,9 @@ button:hover{background:rgba(239,68,68,.35)}
 .ss{display:flex;gap:8px;align-items:center;padding:2px 0}.ss .nm{flex:1}.ss .v{color:var(--mut)}
 span.on{width:7px;height:7px;border-radius:50%;background:var(--ok)}span.off{width:7px;height:7px;border-radius:50%;background:#555}
 .empty{color:var(--mut);padding:4px 0}
+.pn{display:inline-block;min-width:36px;font-variant-numeric:tabular-nums}
+.chip.pj{max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net-pub{color:#ffd27a;white-space:nowrap}
 /* Focus block */
 .fz{border-top:1px solid var(--line);padding-top:5px;display:flex;flex-direction:column;gap:3px;font-size:11px}
 .fr{display:flex;align-items:center;gap:6px;min-width:0}
@@ -109,6 +113,7 @@ button.tx,.fr button.tx{flex:1;min-width:0;background:none;color:var(--fg);paddi
 button.tx b{display:block;font-weight:600}button.tx span{display:block;color:var(--mut)}
 button.run{background:rgba(250,204,21,.2);color:#facc15;font-variant-numeric:tabular-nums}button.run:hover{background:rgba(250,204,21,.35)}
 .pm{color:var(--mut);white-space:nowrap}
+.fr.wg{justify-content:flex-end}
 #w{position:relative}
 .boot{position:absolute;inset:0;z-index:5;background:#181a20;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:0 22px;cursor:grab}
 .boot b{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums}.boot .bar{width:100%}.boot .bar span{background:var(--acc);width:1%;transition:width .1s linear}
@@ -126,23 +131,29 @@ const fmtMem = m => m >= 1024 ? (m / 1024).toFixed(1) + ' ГБ' : m + ' МБ';
 const fmtAge = m => m >= 1440 ? Math.floor(m / 1440) + 'д' : m >= 60 ? Math.floor(m / 60) + 'ч' : m + 'м';
 const col = (v, c) => v >= c.crit ? 'var(--crit)' : v >= c.warn ? 'var(--warn)' : 'var(--ok)';
 const metric = (n, v, c) => v == null ? '' : `<div class="row"><b>${n}</b><div class="bar"><span style="width:${Math.min(100, v)}%;background:${col(v, c)}"></span></div><i>${v.toFixed(0)}%</i></div>`;
-// Network indicator: 3 styles (dial / graph / bars) x 3 channels (both / download / upload).
-// Log scale 1 KB/s .. 100 MB/s; the dial and bars follow the average of the last ~4.5 s.
+// Speed indicator: network or disk x 4 styles (dial / two dials / graph / bars) x 3 channels (both / in / out).
+// For the disk "rx" is reading and "tx" is writing. Log scale; dials and bars follow the average of the last ~4.5 s.
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 let gStyle = lsGet('pcm.style', 'dial'), gCh = lsGet('pcm.ch', 'both');
-const samples = [], hist = [];
-let prevD = 0, prevU = 0, prevBD = 0, prevBU = 0, lastSeq = null, lastH = 0;
+// per source: byte-per-second range of the log scale, its tick labels [position, text] and channel names
+const SRC = {
+  net: { min: 1e3, decades: 5, ticks: [[0, '1K'], [.2, '10K'], [.4, '100K'], [.6, '1M'], [.8, '10M'], [1, '100M']], bars: [[0, '1K'], [.6, '1M'], [1, '100M']], down: 'Вход', up: 'Выход', both: 'Скачивание и отправка', rx: 'Только скачивание', tx: 'Только отправка' },
+  disk: { min: 1e5, decades: Math.log10(2e4), ticks: [[0, '100K'], [.2325, '1M'], [.465, '10M'], [.6975, '100M'], [.93, '1G']], bars: [[0, '100K'], [.465, '10M'], [.93, '1G']], down: 'Чтение', up: 'Запись', both: 'Чтение и запись', rx: 'Только чтение', tx: 'Только запись' },
+};
+const BUF = { net: { samples: [], hist: [], seq: null }, disk: { samples: [], hist: [], seq: null } };
+let gSrc = 'net', samples = BUF.net.samples, hist = BUF.net.hist;
+let prevD = 0, prevU = 0, prevBD = 0, prevBU = 0, lastH = 0;
 const C_D = '#e8eaf0', C_U = '#6aa3ff', BARW = 130;
-function pushSample(rx, tx) { const now = Date.now(); samples.push({ t: now, rx, tx }); while (samples[0].t < now - 4500) samples.shift(); hist.push({ rx, tx }); if (hist.length > 90) hist.shift(); }
-const avgOf = k => samples.reduce((a, x) => a + x[k], 0) / samples.length;
-const posOf = v => Math.max(0, Math.min(1, Math.log10(Math.max(v, 1000) / 1000) / 5));
+function pushSample(b, seq, rx, tx) { if (b.seq === seq) return; b.seq = seq; const now = Date.now(); b.samples.push({ t: now, rx, tx }); while (b.samples[0].t < now - 4500) b.samples.shift(); b.hist.push({ rx, tx }); if (b.hist.length > 90) b.hist.shift(); }
+const avgOf = k => samples.reduce((a, x) => a + x[k], 0) / (samples.length || 1);
+const posOf = v => { const s = SRC[gSrc]; return Math.max(0, Math.min(1, Math.log10(Math.max(v, s.min) / s.min) / s.decades)); };
 const showD = () => gCh !== 'tx', showU = () => gCh !== 'rx';
 const CX = 100, CY = 54, R = 44;
 const pt = (p, r) => { const a = Math.PI * (1 - p); return [CX + r * Math.cos(a), CY - r * Math.sin(a)]; };
 function dialSvg(dDeg, uDeg) {
   let ticks = '';
-  [['1K', 0], ['10K', .2], ['100K', .4], ['1M', .6], ['10M', .8], ['100M', 1]].forEach(([l, p]) => { const [x1, y1] = pt(p, R - 1), [x2, y2] = pt(p, R + 4), [tx, ty] = pt(p, R + 11); ticks += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#8b91a0" stroke-width="1"/><text class="t" x="${tx}" y="${ty + 2}">${l}</text>`; });
+  SRC[gSrc].ticks.forEach(([p, l]) => { const [x1, y1] = pt(p, R - 1), [x2, y2] = pt(p, R + 4), [tx, ty] = pt(p, R + 11); ticks += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#8b91a0" stroke-width="1"/><text class="t" x="${tx}" y="${Math.max(6, ty + 2)}">${l}</text>`; });
   const arc = (a, b, c) => { const [x1, y1] = pt(a, R), [x2, y2] = pt(b, R); return `<path d="M${x1} ${y1} A${R} ${R} 0 0 1 ${x2} ${y2}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round" opacity=".55"/>`; };
   const single = gCh !== 'both';
   const needle = (id, deg, len, color, w) => `<g id="${id}" style="transform-origin:${CX}px ${CY}px;transform:rotate(${deg}deg)"><line x1="${CX}" y1="${CY}" x2="${CX - len}" y2="${CY}" stroke="${color}" stroke-width="${w}" stroke-linecap="round"/></g>`;
@@ -176,7 +187,7 @@ function barsSvg(bd, bu) {
     const y = y0 + i * (bh + gap);
     g += `<text x="2" y="${y + bh - 2}" fill="${r[2]}" font-size="${one ? 13 : 10}">${r[1]}</text><rect x="16" y="${y}" width="${BARW}" height="${bh}" rx="${bh / 2}" fill="rgba(255,255,255,.08)"/><rect id="${r[0]}" x="16" y="${y}" width="${r[3] * BARW}" height="${bh}" rx="${bh / 2}" fill="${r[2]}" opacity=".85" style="transition:width 1.2s cubic-bezier(.2,.8,.2,1)"/><text x="198" y="${y + bh - 2}" text-anchor="end" fill="${C_D}" font-size="${one ? 10 : 8}">${fmtB(avgOf(r[4]))}</text>`;
   });
-  [['1K', 0], ['1M', .6], ['100M', 1]].forEach(([l, p]) => { g += `<text class="t" x="${16 + p * BARW}" y="62" style="text-anchor:${p === 0 ? 'start' : p === 1 ? 'end' : 'middle'}">${l}</text>`; });
+  SRC[gSrc].bars.forEach(([p, l]) => { g += `<text class="t" x="${16 + p * BARW}" y="62" style="text-anchor:${p === 0 ? 'start' : p === 1 ? 'end' : 'middle'}">${l}</text>`; });
   return `<svg class="gauge" width="206" height="66" viewBox="0 0 200 64">${g}</svg>`;
 }
 // 12px line icons (currentColor) for the widget's control row
@@ -193,11 +204,18 @@ const IC = {
   report: svgIcon('<path d="M4 2.5h8v11H4zM6 6h4M6 8.5h4M6 11h2.5"/>'),
 };
 const segBtns = (attr, sel, list) => `<span class="seg">${list.map(([v, h]) => `<button data-${attr}="${v}" title="${h}" aria-label="${h}" class="${sel === v ? 'on' : ''}">${IC[v]}</button>`).join('')}</span>`;
-const netControls = st => `<div class="ctl">${segBtns('ch', gCh, [['both', 'Скачивание и отправка'], ['rx', 'Только скачивание'], ['tx', 'Только отправка']])}${speedControls(st)}${segBtns('gs', gStyle, [['dial', 'Стрелка'], ['duo', 'Два датчика: вход и выход'], ['graph', 'График'], ['bars', 'Полосы']])}</div>`;
-// live speed on two analog dials: incoming and outgoing, same 1 KB/s .. 100 MB/s scale as the single dial
-const BYTE_TICKS = [[0, '1K'], [.2, '10K'], [.4, '100K'], [.6, '1M'], [.8, '10M'], [1, '100M']];
+const netControls = st => { const s = SRC[gSrc]; return `<div class="ctl">${segBtns('ch', gCh, [['both', s.both], ['rx', s.rx], ['tx', s.tx]])}${speedControls(st)}${segBtns('gs', gStyle, [['dial', 'Стрелка'], ['duo', `Два датчика: ${s.down.toLowerCase()} и ${s.up.toLowerCase()}`], ['graph', 'График'], ['bars', 'Полосы']])}</div>`; };
+// speed row: current values with the "network / disk" switch between them
+function speedRow(s, io) {
+  const sw = `<span class="seg srcsw">${[['net', 'Сеть', 'Скорость сети'], ['disk', 'Диск', 'Скорость дисков: чтение и запись']].map(([v, t, h]) => `<button data-src="${v}" class="${gSrc === v ? 'on' : ''}" title="${h}">${t}</button>`).join('')}</span>`;
+  const val = (a, v) => `<span class="sv">${a} <em>${v == null ? '—' : fmtB(v)}</em></span>`;
+  if (gSrc === 'net') return `<div class="net">${val('↓', s.rx)}${sw}${val('↑', s.tx)}</div>`;
+  if (io.status === 'error') return `<div class="net"><span class="sv" title="Windows не отдаёт счётчики дисков; повторная попытка через 30 с">нет данных</span>${sw}<span class="sv"></span></div>`;
+  return `<div class="net">${val('↓', io.read)}${sw}${val('↑', io.write)}</div>`;
+}
+// live speed on two analog dials, same scale as the single dial
 function duoSvg(dDeg, uDeg) {
-  return `<svg class="gauge" width="212" height="66" viewBox="0 0 200 64">${miniDial(50, 'nd', dDeg, C_D, '↓ Вход', fmtB(avgOf('rx')), !showD(), BYTE_TICKS, 8)}${miniDial(150, 'nu', uDeg, C_U, '↑ Выход', fmtB(avgOf('tx')), !showU(), BYTE_TICKS, 8)}</svg>`;
+  return `<svg class="gauge" width="212" height="66" viewBox="0 0 200 64">${miniDial(50, 'nd', dDeg, C_D, '↓ ' + SRC[gSrc].down, fmtB(avgOf('rx')), !showD(), SRC[gSrc].ticks, 8)}${miniDial(150, 'nu', uDeg, C_U, '↑ ' + SRC[gSrc].up, fmtB(avgOf('tx')), !showU(), SRC[gSrc].ticks, 8)}</svg>`;
 }
 // ---- internet speed test: two analog dials (download = "чтение", upload = "передача"), stage by stage ----
 let reportOpen = false, dismissedAt = 0, prevSD = 0, prevSU = 0;
@@ -267,7 +285,13 @@ function usageBlock(us, bud) {
   }
   return h + '</div>';
 }
-let keyMsg = '', lastD = null;
+let keyMsg = '', lastD = null, portsAll = false;
+function portsBlock(list) {   // listening TCP ports: dev tools and popular ports by default
+  list = list || [];
+  const rows = portsAll ? list : list.filter(p => p.dev);
+  const row = p => `<div class="p"><span class="nm" title="${esc(p.name)} · PID ${p.pid}"><b class="pn">${p.port}</b> ${esc(p.name)}<small>${p.pid}${p.ageMin != null ? ' · ' + fmtAge(p.ageMin) : ''}${p.memMB != null ? ' · ' + fmtMem(p.memMB) : ''}</small></span>${p.project ? `<span class="chip pj" title="${esc(p.project)}">${esc(p.project)}</span>` : ''}<span class="${p.public ? 'net-pub' : 'v'}" title="${p.public ? 'Принимает подключения не только с этого компьютера (доступ может ограничивать брандмауэр)' : 'Принимает подключения только с этого компьютера'}">${p.public ? 'из сети' : 'этот ПК'}</span>${p.lock ? `<span class="v" title="Из программы не завершается: ${esc(p.lock)}">🔒</span>` : `<button data-pid="${p.pid}" data-port="${p.port}" data-name="${esc(p.name)}" data-mem="${p.memMB}" data-proj="${esc(p.project || '')}" title="Завершить процесс на порту ${p.port}">✕</button>`}</div>`;
+  return `<h4>Занятые порты (${rows.length}${portsAll ? '' : ' из ' + list.length})</h4><div class="grp">${rows.map(row).join('') || '<div class="empty">Портов инструментов разработки не занято</div>'}<div class="ss"><button class="gh" data-portsall="1">${portsAll ? 'Только разработка' : 'Показать все'}</button></div></div>`;
+}
 const money = v => '$' + v.toFixed(2);
 function spendBlock(sp, keys, bud) {
   sp = sp || {}; keys = keys || {}; bud = bud || {};
@@ -373,9 +397,17 @@ function frogCtl(f, x) {   // pomodoro: length (click to change) + start / stop 
     ? fzb('frogStop', x.id, '■ ' + fmtLeft(f.timer.end - Date.now()), 'run', 'title="Остановить (помидор не засчитается)"')
     : fzb('frogEst', x.id, x.est + 'м', 'gh', 'title="Прогноз по времени 15–40 мин: нажми, чтобы изменить"') + fzb('frogStart', x.id, '▶ Начать', 'ok'));
 }
-const wordCtl = () => fzb('wordNext', '', '↻', 'gh', 'title="Другое слово"') + fzb('wordKnown', '', '✓', 'ok', 'title="Выучил — засчитать"');
+// spaced repetition card: grade buttons appear once the translation is open
+function wordCard(f) {
+  const w = f.word;
+  if (!w) return '<div class="fr mt">На сегодня всё 👍</div>';
+  const open = shown.wd === w.de, skip = fzb('wordNext', '', '↻', 'gh', 'title="Отложить в конец очереди, без оценки"');
+  return `<div class="fr">${reveal('wd', w)}${w.isNew ? '<small class="pm">новое</small>' : ''}${open ? '' : skip}</div>`
+    + (open ? `<div class="fr wg">${fzb('wordAgain', w.de, 'Не знаю', '', 'title="Повторить сегодня ещё раз"')}${fzb('wordKnown', w.de, 'Знаю', 'ok', 'title="Показать позже: через 1, 3, 7, 14, 30 дней"')}${skip}</div>` : '');
+}
+const wordStat = f => `<div class="fr mt" title="Выученным слово становится после успешного повторения через 30 дней">повторить: ${f.words.due}${f.words.newLeft ? ' · новых: ' + f.words.newLeft : ''}</div>`;
 const sentenceRow = f => `<div class="fr">${reveal('sn', f.sentence)}${fzb('sentenceNext', '', '↻', 'gh', 'title="Другая фраза"')}</div>`;
-const counter = f => `<span class="cnt" title="Выучено слов: за день / за месяц">${f.learned.day}/${f.learned.month}</span>`;
+const counter = f => `<span class="cnt" title="Выучено слов: за день / за месяц">выучено ${f.learned.day}/${f.learned.month}</span>`;
 function goalsBody(f) {   // widget: every goal with its next step (goals and steps are added in the panel)
   if (!f.goals.length) return '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Цели">＋ добавить цель</button></div>';
   return f.goals.map(g => {
@@ -395,7 +427,7 @@ function focusStrip(f) {   // compact sections for the always-on-screen widget
     (f.frogs.length ? f.frogs.map(x => `<div class="fr ${x.done ? 'dn' : ''}">${fzb('frogToggle', x.id, x.done ? '✓' : '', 'ck')}<span title="${esc(x.t)}">${esc(x.t)}</span>${frogCtl(f, x)}</div>`).join('') : '<div class="fr mt">лягушки не выбраны</div>')
     + (f.frogs.length < o.frogsMax ? '<div class="fr"><button class="gh" data-openpanel="1" title="Откроется панель: раздел «Фокус» → Съесть лягушку">＋ добавить лягушку</button></div>' : ''));
   if (o.goals) h += sec('🎯 Цели дня', '', goalsBody(f));
-  if (o.lang) { const g = f.habits.find(b => b.word); h += sec('🇩🇪 Изучаем язык', counter(f), `<div class="fr">${reveal('wd', f.word)}${wordCtl()}</div>${g ? `<div class="hbs">${hbt(g)}</div>` : ''}`); }
+  if (o.lang) { const g = f.habits.find(b => b.word); h += sec('🇩🇪 Изучаем язык', counter(f), `${wordCard(f)}${wordStat(f)}${g ? `<div class="hbs">${hbt(g)}</div>` : ''}`); }
   const other = o.habits ? f.habits.filter(b => !b.word) : [];
   if (other.length) {
     const op = other.find(b => b.phrases && b.id === openPhr);
@@ -420,7 +452,7 @@ function focusBlock(f, open) {   // full block for the panel
     if (f.frogs.length < o.frogsMax) h += addRow('frog', 'Самая неприятная задача на сегодня', 'frogAdd');
     h += `<div class="ss"><span class="nm" style="color:var(--mut)">Съедено за 7 дней: ${f.frogsWeek}</span></div>`;
   }
-  if (o.lang) h += `<h4>Изучаем язык · слов за день / месяц: ${f.learned.day}/${f.learned.month}</h4><div class="ss">${reveal('wd', f.word)}${wordCtl()}</div>`;
+  if (o.lang) h += `<h4>Изучаем язык · выучено за день / месяц: ${f.learned.day}/${f.learned.month}</h4>${wordCard(f)}${wordStat(f)}`;
   if (o.habits) {
     h += '<h4>Привычки</h4>';
     for (const b of f.habits) {
@@ -450,7 +482,7 @@ function focusSettings(f, open) {   // sits at the very bottom of the panel list
   const seg = (k, vals, unit) => `<div class="ss"><span class="nm">${unit[0]}</span><span class="seg">${vals.map(v => `<button class="${o[k] === v ? 'sel' : ''}" data-fsetv="${k}" data-v="${v}">${v}</button>`).join('')}</span></div>`;
   return `<details class="grp" data-k="fzset" ${open.has('fzset') ? 'open' : ''}><summary><span class="n">Настройки блока «Фокус»</span></summary>
     ${chk('enabled', 'Показывать блок «Фокус»')}${chk('phrase', 'Мотиватор дня')}${chk('frogs', 'Съесть лягушку')}${chk('lang', 'Изучаем язык')}${chk('habits', 'Привычки')}${chk('goals', 'Цели дня')}${chk('notify', 'Напоминание (уведомление Windows)')}
-    ${seg('frogsMax', [1, 2, 3, 4, 5], ['Лягушек в день'])}${seg('remindHour', [10, 12, 14, 16, 18], ['Напоминать с, ч'])}</details>`;
+    ${seg('frogsMax', [1, 2, 3, 4, 5], ['Лягушек в день'])}${seg('newPerDay', [1, 3, 5, 10, 15, 20], ['Новых слов в день'])}${seg('remindHour', [10, 12, 14, 16, 18], ['Напоминать с, ч'])}</details>`;
 }
 const STATUS = ['Всё в порядке', 'Повышенная нагрузка', 'Перегрузка'];
 
@@ -462,14 +494,17 @@ function render(d) {
   if (view === 'widget') {
     bootState = d.boot || bootState;
     if (bootPct < 2 && Date.now() - bootFrom < 800 && BOOT.every(([k]) => bootState[k])) { const el = $('#boot'); if (el) el.remove(); }   // re-created widget: everything is already known
-    if (d.seq !== lastSeq) { pushSample(s.rx, s.tx); lastSeq = d.seq; }
+    const io = d.io || { status: 'wait' };
+    pushSample(BUF.net, d.seq, s.rx, s.tx);
+    if (io.status === 'ok') pushSample(BUF.disk, io.seq, io.read, io.write);
+    gSrc = c.speedSrc === 'disk' ? 'disk' : 'net'; ({ samples, hist } = BUF[gSrc]);
     const st = d.speedtest || {};
     const showSpeed = st.running || (st.result && ((reportOpen) || (st.result.at !== dismissedAt && Date.now() - st.result.at < 25000)));
     const sv = showSpeed ? speedView(st) : null;
     const pd = posOf(avgOf('rx')), pu = posOf(avgOf('tx'));
     const ind = sv ? `<div class="res" data-dismiss="1">${sv.html}</div>` : gStyle === 'graph' ? graphSvg() : gStyle === 'bars' ? barsSvg(prevBD, prevBU) : gStyle === 'duo' ? duoSvg(prevD, prevU) : dialSvg(prevD, prevU);
     $('#w').className = 'card l' + level;
-    $('#wtop').innerHTML = `<div class="hd"><span class="dot"></span>PC Monitor<span class="ver">v${esc(d.version || '')}</span><small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}<div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>${ind}${netControls(st)}${focusStrip(d.focus)}`;
+    $('#wtop').innerHTML = `<div class="hd"><span class="dot"></span>PC Monitor<span class="ver">v${esc(d.version || '')}</span><small>${level ? esc(worst.name) + ' ' + worst.v.toFixed(0) + '%' : 'ОК'}</small></div>${m}${speedRow(s, io)}${ind}${netControls(st)}${focusStrip(d.focus)}`;
     updateScan(d);
     const anim = (el, fn) => { if (el) { el.getBoundingClientRect(); fn(el); } };   // reflow first so the CSS transition runs from the previous value
     if (sv) { anim($('#sd'), e => { e.style.transform = `rotate(${sv.tgtD}deg)`; }); anim($('#su'), e => { e.style.transform = `rotate(${sv.tgtU}deg)`; }); prevSD = sv.tgtD; prevSU = sv.tgtU; }
@@ -493,6 +528,7 @@ function render(d) {
   <div class="net"><span>↓ <em>${fmtB(s.rx)}</em></span><span>↑ <em>${fmtB(s.tx)}</em></span></div>
   <div class="scroll">${focusBlock(d.focus, open)}${!a ? '<div class="empty">Сканирую процессы…</div>' : `
     ${sus.length ? `<h4>Подозрительные (${sus.length})</h4><div class="grp sus">${sus.map(proc).join('')}</div>` : ''}
+    ${portsBlock(a.ports)}
     ${a.llm && (a.llm.tools.length || a.llm.local.length) ? `<h4>LLM: инструменты и модели</h4><div class="grp">
       ${a.llm.local.map(m => `<div class="ss"><span class="on"></span><span class="nm" title="${esc(m.model)}">${esc(m.runtime === 'ollama' ? 'Ollama' : 'LM Studio')} · ${esc(m.model)}</span><span class="v">${m.sizeMB ? fmtMem(m.sizeMB) + (m.vramMB ? ' (GPU ' + fmtMem(m.vramMB) + ')' : '') : 'загружена'}${m.expiresInMin != null ? ' · ещё ' + m.expiresInMin + 'м' : ''}</span>${m.runtime === 'ollama' ? `<button data-unload="${esc(m.model)}" data-rt="ollama">Выгрузить</button>` : ''}</div>`).join('')}
       ${a.llm.tools.map(t => `<div class="ss"><span class="nm">${esc(t.label)}<small style="color:var(--mut);margin-left:4px">${esc(t.kind)}</small></span><span class="v">${t.procs} проц. · ${fmtMem(t.memMB)} · ${t.cpu}% · ${fmtAge(t.ageMin)}</span></div>`).join('')}</div>` : ''}
@@ -512,10 +548,10 @@ function render(d) {
 if (view === 'widget') {
   buildWidget();
   document.addEventListener('contextmenu', e => { e.preventDefault(); api.widgetMenu(); });
-  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl, .res, .scan, .fz button')) api.openPanel(); });
+  document.addEventListener('dblclick', e => { if (!e.target.closest('.ctl, .srcsw, .res, .scan, .fz button')) api.openPanel(); });
   // drag the widget by any point (JS-based so right-click and double-click keep working)
   let dragging = false;
-  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl, .res, .scan, .fz button')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
+  document.addEventListener('pointerdown', e => { if (e.button !== 0 || e.target.closest('.ctl, .srcsw, .res, .scan, .fz button')) return; dragging = true; document.body.setPointerCapture(e.pointerId); api.drag('start', e.screenX, e.screenY); });
   document.addEventListener('pointermove', e => { if (dragging) api.drag('move', e.screenX, e.screenY); });
   const end = e => { if (dragging) { dragging = false; api.drag('end', e.screenX, e.screenY); } };
   document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
@@ -568,6 +604,7 @@ async function focusClick(e) {
       fzArm = type + id; clearTimeout(fzArmT); fzArmT = setTimeout(() => { fzArm = ''; if (lastD) render(lastD); }, 4000); if (lastD) render(lastD); return true;
     }
     fzArm = '';
+    if (type.startsWith('word')) shown.wd = '';   // the next card (or the same one again) starts closed
     const r = await api.focus(type, { id, goalId: fz.dataset.goal, dir: +fz.dataset.dir || 0 });
     if (!r.ok) fzSay(r.msg);
     return true;
@@ -579,6 +616,8 @@ document.addEventListener('click', async e => {
   if (e.target.closest('button[data-speed]')) { api.speedStart(); return; }
   if (e.target.closest('button[data-report]')) { reportOpen = !reportOpen; if (reportOpen) dismissedAt = 0; if (lastD) render(lastD); return; }
   if (e.target.closest('[data-dismiss]')) { const st = lastD && lastD.speedtest; if (st && !st.running) { dismissedAt = st.result ? st.result.at : 0; reportOpen = false; if (lastD) render(lastD); } return; }
+  const src = e.target.closest('button[data-src]');
+  if (src) { closeSpeed(); await api.setSpeedSource(src.dataset.src); return; }
   const chb = e.target.closest('button[data-ch]');
   if (chb) { gCh = chb.dataset.ch; lsSet('pcm.ch', gCh); closeSpeed(); if (lastD) render(lastD); return; }
   const gsb = e.target.closest('button[data-gs]');
@@ -590,9 +629,10 @@ document.addEventListener('click', async e => {
   if (e.target.closest('button[data-refreshspend]')) { e.target.disabled = true; await api.refreshSpend(); e.target.disabled = false; return; }
   const u = e.target.closest('button[data-unload]');
   if (u) { u.disabled = true; const r = await api.unloadModel({ runtime: u.dataset.rt, model: u.dataset.unload }); u.textContent = r.ok ? '✓' : '!'; u.title = r.msg; return; }
-  const b =e.target.closest('button[data-pid]'); if (!b) return;
+  if (e.target.closest('button[data-portsall]')) { portsAll = !portsAll; if (lastD) render(lastD); return; }
+  const b = e.target.closest('button[data-pid]'); if (!b) return;
   b.disabled = true;
-  const r = await api.kill({ pid: +b.dataset.pid, name: b.dataset.name, memMB: +b.dataset.mem, project: b.dataset.proj, cpu: b.dataset.cpu ? +b.dataset.cpu : undefined });
+  const r = await api.kill({ pid: +b.dataset.pid, name: b.dataset.name, memMB: +b.dataset.mem, project: b.dataset.proj, cpu: b.dataset.cpu ? +b.dataset.cpu : undefined, port: b.dataset.port ? +b.dataset.port : undefined });
   b.disabled = false; if (!r.ok) b.title = r.msg;
 });
 api.onStats(render);

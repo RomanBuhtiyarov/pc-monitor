@@ -6,11 +6,14 @@ const isPhraseHabit = h => /фраз|phrase|satz|sätze/i.test(h.t);   // such a
 
 const EST = [15, 20, 25, 30, 40];   // pomodoro length choices for a frog, minutes
 const LIM = { goals: 20, subs: 50, habits: 8, text: 120, keepDays: 60 };
-const OPT_DEFAULTS = { enabled: true, frogs: true, lang: true, habits: true, goals: true, phrase: true, frogsMax: 2, remindHour: 14, notify: true };
+const OPT_DEFAULTS = { enabled: true, frogs: true, lang: true, habits: true, goals: true, phrase: true, frogsMax: 2, remindHour: 14, notify: true, newPerDay: 5 };
+const STEPS = [1, 3, 7, 14, 30];   // spaced repetition: days until the next review after the 1st..5th "know"
+const MIGRATED_STEP = 3;           // words ticked before 0.12 continue from the 7-day interval
 const opts = cfg => {
   const o = { ...OPT_DEFAULTS, ...((cfg && cfg.focus) || {}) };
   o.frogsMax = Math.max(1, Math.min(5, Math.round(+o.frogsMax) || 2));
   o.remindHour = Math.max(0, Math.min(23, Math.round(+o.remindHour) || 14));
+  o.newPerDay = Math.max(1, Math.min(20, Math.round(+o.newPerDay) || 5));
   return o;
 };
 
@@ -21,14 +24,17 @@ const dayNum = d => Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const str = (s, n = LIM.text) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
 const minutes = v => Math.max(1, Math.min(240, Math.round(+v) || 15));
-const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], shift: { day: '', word: 0, phrase: 0, sentence: 0 }, notified: '', learned: {}, pomo: {}, timer: null });
+const fresh = () => ({ frogs: [], goals: [], habits: [{ id: 'de', t: 'Немецкий', min: 15, word: true, days: {} }], known: [], cards: null, intro: {}, lapses: 0, shift: { day: '', phrase: 0, sentence: 0, skip: [] }, notified: '', learned: {}, pomo: {}, timer: null });
 
 function init(dir) {
   file = path.join(dir, 'focus.json'); db = fresh();
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
     for (const k of ['frogs', 'goals', 'habits', 'known']) if (Array.isArray(j[k])) db[k] = j[k];
-    if (j.shift && typeof j.shift === 'object') db.shift = { day: '', word: 0, phrase: 0, ...j.shift };
+    if (j.shift && typeof j.shift === 'object') db.shift = { ...db.shift, ...j.shift, skip: Array.isArray(j.shift.skip) ? j.shift.skip : [] };
+    if (j.cards && typeof j.cards === 'object') db.cards = j.cards;
+    if (j.intro && typeof j.intro === 'object') db.intro = j.intro;
+    if (Number.isFinite(j.lapses)) db.lapses = j.lapses;
     if (typeof j.notified === 'string') db.notified = j.notified;
     for (const k of ['learned', 'pomo']) if (j[k] && typeof j[k] === 'object') db[k] = j[k];
     if (j.timer && Number.isFinite(j.timer.end)) db.timer = j.timer;
@@ -38,7 +44,7 @@ function init(dir) {
 function save() { if (file) try { fs.writeFileSync(file, JSON.stringify(db, null, 1)); } catch {} }
 const reset = () => { db = fresh(); };   // tests
 
-const shiftFor = now => { const k = dayKey(now); if (db.shift.day !== k) db.shift = { day: k, word: 0, phrase: 0, sentence: 0 }; return db.shift; };
+const shiftFor = now => { const k = dayKey(now); if (db.shift.day !== k) db.shift = { day: k, phrase: 0, sentence: 0, skip: [] }; return db.shift; };
 const streakOf = (h, now) => {
   let n = 0; const d = new Date(now);
   if (!h.days[dayKey(d)]) d.setDate(d.getDate() - 1);   // today not done yet: the streak is still alive until midnight
@@ -46,8 +52,43 @@ const streakOf = (h, now) => {
   return n;
 };
 const weekOf = (h, now) => { const a = []; const d = new Date(now); d.setDate(d.getDate() - 6); for (let i = 0; i < 7; i++) { a.push(!!h.days[dayKey(d)]); d.setDate(d.getDate() + 1); } return a; };
-const wordsLeft = () => { const k = new Set(db.known); const l = WORDS.filter(w => !k.has(w)); return l.length ? l : WORDS; };
-const wordRaw = now => { const c = wordsLeft(); return c[(dayNum(now) + shiftFor(now).word) % c.length]; };
+const addDays = (now, n) => { const d = new Date(now); d.setDate(d.getDate() + n); return dayKey(d); };
+
+// cards: word -> { step, due, again } (step = successful reviews so far; done = learned; again = order of "don't know")
+function ensureCards(now) {
+  if (db.cards) return;
+  db.cards = {};
+  db.known.forEach((w, i) => { db.cards[w] = { step: MIGRATED_STEP, due: addDays(now, Math.floor(i / 5)) }; });   // 5 a day, not all at once
+  if (db.known.length) save();
+}
+
+// Today's queue: reviews that are due, then new words (daily limit), then today's "don't know" ones;
+// skipped words go to the end. -> { word | null, isNew, due: reviews waiting, newLeft }
+function wordQueue(o, now) {
+  ensureCards(now);
+  const key = dayKey(now), skip = shiftFor(now).skip;
+  const mine = WORDS.filter(w => { const c = db.cards[w]; return c && !c.done && c.due <= key; });
+  const today = w => !!db.cards[w].again && db.cards[w].due === key;   // "don't know" from an earlier day is an ordinary review
+  const due = mine.filter(w => !today(w)).sort((a, b) => db.cards[a].due.localeCompare(db.cards[b].due));
+  const again = mine.filter(today).sort((a, b) => db.cards[a].again - db.cards[b].again);
+  const unseen = WORDS.filter(w => !db.cards[w]);
+  const newLeft = Math.max(0, Math.min(unseen.length, o.newPerDay - (db.intro[key] || 0)));
+  const all = [...due, ...(newLeft ? unseen : []), ...again];
+  const q = all.filter(w => !skip.includes(w)).concat(skip.filter(w => all.includes(w)));
+  const word = q[0] || null;
+  return { word, isNew: !!word && !db.cards[word], due: mine.length, newLeft };
+}
+
+function grade(know, p, o, now) {
+  const q = wordQueue(o, now), w = q.word, key = dayKey(now);
+  if (!w || (p.id && p.id !== w.split('|')[0])) return;   // a second click on a card that is already graded
+  if (!db.cards[w]) db.intro[key] = (db.intro[key] || 0) + 1;
+  const c = db.cards[w] || { step: 0, due: key };
+  if (!know) db.cards[w] = { step: 0, due: key, again: ++db.lapses };
+  else if (c.step >= STEPS.length) { db.cards[w] = { step: c.step, due: c.due, done: key }; db.learned[key] = (db.learned[key] || 0) + 1; }
+  else db.cards[w] = { step: c.step + 1, due: addDays(now, STEPS[c.step]) };
+  const sh = shiftFor(now); sh.skip = sh.skip.filter(x => x !== w);
+}
 
 // Pure: one most important direct recommendation. st = { frogs, carry, habits, goals }, o = options, hour = 0..23
 function recommend(st, o, hour) {
@@ -84,7 +125,7 @@ function summary(cfg, now = new Date()) {
     const done = g.subs.filter(s => s.done).length, nx = g.subs.find(s => !s.done);
     return { id: g.id, t: g.t, subs: g.subs.map(s => ({ id: s.id, t: s.t, done: !!s.done, frog: active.has(s.id) })), done, total: g.subs.length, pct: g.subs.length ? Math.round(done / g.subs.length * 100) : 0, next: nx ? nx.id : null };
   });
-  const raw = wordRaw(now).split('|');
+  const wq = wordQueue(o, now), raw = wq.word && wq.word.split('|');
   const ph = PHRASES[(dayNum(now) + shiftFor(now).phrase) % PHRASES.length].split('|');
   const sn = SENTENCES[(dayNum(now) + (shiftFor(now).sentence || 0)) % SENTENCES.length].split('|');
   const rec = recommend({ frogs, carry, habits, goals }, o, now.getHours());
@@ -94,7 +135,7 @@ function summary(cfg, now = new Date()) {
     timer: db.timer, pomoToday: db.pomo[key] || 0,
     learned: { day: db.learned[key] || 0, month: Object.entries(db.learned).reduce((a, [k, n]) => a + (k.startsWith(key.slice(0, 7)) ? n : 0), 0) }, carry: carry.map(f => ({ id: f.id, t: f.t })),
     frogsWeek: db.frogs.filter(f => f.done && f.doneDay >= dayKey(weekAgo)).length,
-    habits, goals, word: { de: raw[0], ru: raw[1] }, phrase: { de: ph[0], ru: ph[1] }, sentence: { de: sn[0], ru: sn[1] }, rec,
+    habits, goals, word: raw ? { de: raw[0], ru: raw[1], isNew: wq.isNew } : null, words: { due: wq.due, newLeft: wq.newLeft }, phrase: { de: ph[0], ru: ph[1] }, sentence: { de: sn[0], ru: sn[1] }, rec,
   };
 }
 
@@ -188,8 +229,9 @@ function act(type, p, cfg, now = new Date()) {
     }
     case 'habitRemove': db.habits = db.habits.filter(h => h.id !== p.id); break;
     case 'habitToggle': { const h = db.habits.find(x => x.id === p.id); if (!h) return NO('Не найдено'); if (h.days[key]) delete h.days[key]; else h.days[key] = true; break; }
-    case 'wordKnown': { const w = wordRaw(now); if (!db.known.includes(w)) { db.known.push(w); db.learned[key] = (db.learned[key] || 0) + 1; } break; }
-    case 'wordNext': shiftFor(now).word++; break;
+    case 'wordKnown': grade(true, p, o, now); break;
+    case 'wordAgain': grade(false, p, o, now); break;
+    case 'wordNext': { const w = wordQueue(o, now).word; if (w) { const sh = shiftFor(now); sh.skip = sh.skip.filter(x => x !== w).concat(w); } break; }
     case 'sentenceNext': { const sh = shiftFor(now); sh.sentence = (sh.sentence || 0) + 1; break; }
     case 'phraseNext': shiftFor(now).phrase++; break;
     default: return NO('Неизвестное действие');
@@ -199,4 +241,4 @@ function act(type, p, cfg, now = new Date()) {
   save(); return r;
 }
 
-module.exports = { init, summary, act, tick, reminder, recommend, opts, OPT_DEFAULTS, reset, _db: () => db };
+module.exports = { init, summary, act, tick, reminder, recommend, opts, OPT_DEFAULTS, STEPS, reset, _db: () => db };

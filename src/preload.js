@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   speedStart: () => ipcRenderer.invoke('speedtest-start'),
   unloadModel: p => ipcRenderer.invoke('unload-model', p),
   setScanInterval: sec => ipcRenderer.invoke('scan-interval', sec),
+  setSpeedSource: src => ipcRenderer.invoke('speed-source', src),
   focus: (type, p) => ipcRenderer.invoke('focus', { type, p }),
   focusSettings: p => ipcRenderer.invoke('focus-settings', p),
   openPanel: () => ipcRenderer.send('open-panel'),

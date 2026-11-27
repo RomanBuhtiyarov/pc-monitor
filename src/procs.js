@@ -2,6 +2,7 @@
 const { execFile } = require('child_process');
 const os = require('os'), fs = require('fs'), path = require('path');
 const llm = require('./llm');
+const ports = require('./ports');
 
 const BROWSER = /^(chrome|msedge|firefox|brave|opera|vivaldi)\.exe$/i;
 const IDE = /^(code|cursor|windsurf|idea64|pycharm64|webstorm64|rider64|devenv|studio64|zed)\.exe$/i;
@@ -102,13 +103,32 @@ const PROTECTED = /^(system|csrss|wininit|winlogon|services|lsass|smss|explorer|
 const HOG_IGNORE = /^(msmpeng|msmpengcp|nissrv|mpdefendercoreservice|securityhealthservice|searchindexer|searchprotocolhost|searchfilterhost|trustedinstaller|tiworker|compattelrunner|wmiprvse|audiodg|vmmem|vmmemwsl|vmcompute|memory compression|system idle process)(\.exe)?$/i;
 const hogStreak = new Map();   // "pid:start" -> { n, since }: consecutive scans above the hog threshold
 
-// Sustained, unjustified CPU hog = one process above cfg.hogCpu % of the whole CPU for several scans in a row
-// and at least cfg.hogMinSec seconds. Our own process tree (incl. the PowerShell scan) and protected processes are skipped.
-function findHog(list, cfg, prevAt, now) {
+// pids of this app and everything it started (including the PowerShell scan and netstat)
+function ownTree(list) {
   const kids = new Map();
   for (const p of list) { const a = kids.get(p.parentPid); if (a) a.push(p.pid); else kids.set(p.parentPid, [p.pid]); }
   const self = new Set([process.pid]);
   for (const stack = [process.pid]; stack.length;) for (const c of kids.get(stack.pop()) || []) if (!self.has(c)) { self.add(c); stack.push(c); }
+  return self;
+}
+
+// Listening ports with their owners. dev = shown by default (dev / LLM tools and popular dev ports);
+// lock = why the app does not offer to end the owner.
+function portList(found, list, procs, roots, sessions, now = Date.now()) {
+  const all = new Map(list.map(p => [p.pid, p])), known = new Map(procs.map(p => [p.pid, p])), self = ownTree(list);
+  return found.map(f => {
+    const p = all.get(f.pid), name = p ? p.name : f.pid <= 4 ? 'System' : '?';
+    const cat = p ? category(p.name, p.cmd) : 'other', k = known.get(f.pid);
+    const proj = k ? k.project : p && p.cmd ? (projectOf(p.cmd, roots, sessions) || {}).name : null;
+    const lock = !p || f.pid <= 4 || PROTECTED.test(name) ? 'системный' : self.has(f.pid) ? 'PC Monitor' : ports.DOCKER.test(name) ? 'Docker / WSL' : null;
+    return { port: f.port, pid: f.pid, name, public: f.public, project: proj || null, memMB: p ? Math.round(p.memRss / 1024) : null, ageMin: p && p.started ? Math.round((now - p.started) / 60000) : null, dev: cat === 'dev' || cat === 'llm' || ports.POPULAR.has(f.port), lock };
+  });
+}
+
+// Sustained, unjustified CPU hog = one process above cfg.hogCpu % of the whole CPU for several scans in a row
+// and at least cfg.hogMinSec seconds. Our own process tree (incl. the PowerShell scan) and protected processes are skipped.
+function findHog(list, cfg, prevAt, now) {
+  const self = ownTree(list);
   const thr = cfg.hogCpu || 30, minMs = (cfg.hogMinSec || 60) * 1000;
   const keys = new Set(); let best = null;
   for (const p of list) {
@@ -127,7 +147,7 @@ function findHog(list, cfg, prevAt, now) {
 
 async function scan(cfg) {
   const prevAt = lastAt;
-  const [list, nr, local] = await Promise.all([listProcesses(), notResponding(), llm.localModels()]);
+  const [list, nr, local, found] = await Promise.all([listProcesses(), notResponding(), llm.localModels(), ports.listening()]);
   const hog = findHog(list, cfg, prevAt, Date.now());
   const pids = new Set(list.map(p => p.pid));
   const sessions = claudeSessions().concat(llm.codexSessions()).sort((a, b) => b.last - a.last).slice(0, 15);
@@ -180,7 +200,7 @@ async function scan(cfg) {
   gl.forEach(g => { g.procs.sort((a, b) => b.memMB - a.memMB); g.cpu = +g.cpu.toFixed(1); });
   const suspects = procs.filter(p => p.flags.length).sort((a, b) => b.memMB - a.memMB);
   const top = procs.slice().sort((a, b) => b.memMB - a.memMB)[0] || null;
-  return { groups: gl, suspects, sessions, llm: { tools, local }, browsers: Object.values(browsers), top, hog, at: Date.now() };
+  return { groups: gl, suspects, sessions, llm: { tools, local }, browsers: Object.values(browsers), ports: portList(found, list, procs, roots, sessions), top, hog, at: Date.now() };
 }
 
-module.exports = { scan, PROTECTED };
+module.exports = { scan, portList, PROTECTED };

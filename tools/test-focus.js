@@ -53,11 +53,9 @@ const open = sum(5).frogs.find(f => !f.done);
 const next = sum(6); assert(next.carry.some(c => c.id === open.id) && next.frogs.length === 0);
 assert(act('frogCarry', { id: open.id }, 6).ok && sum(6).frogs.length === 1);
 
-// words / phrases rotate and "known" removes a word from rotation
-const w1 = sum().word.de; act('wordNext', {}); assert.notStrictEqual(sum().word.de, w1);
-const w2 = sum().word.de; act('wordKnown', {}); assert.notStrictEqual(sum().word.de, w2);
+// phrases rotate; "skip" moves a word to the end of the queue without grading it
 const p1 = sum().phrase.de; act('phraseNext', {}); assert.notStrictEqual(sum().phrase.de, p1); assert(sum().phrase.ru);
-assert.deepStrictEqual(sum().learned, { day: 1, month: 1 }); act('wordKnown', {}, 6); assert.deepStrictEqual(sum(6).learned, { day: 1, month: 2 });
+const w1 = sum().word.de; act('wordNext', {}); assert.notStrictEqual(sum().word.de, w1); assert.deepStrictEqual(sum().words, { due: 0, newLeft: 5 });
 
 // pomodoro
 const fp = sum(6).frogs[0]; assert.strictEqual(fp.est, 25);
@@ -89,4 +87,46 @@ assert.strictEqual(focus.reminder({ focus: { enabled: false } }, at(6, 15)), nul
 focus.act('frogAdd', { t: 'persist' }, {}, at(5)); focus.reset(); const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-focus-'));
 focus.init(d2); focus.act('frogAdd', { t: 'persist' }, {}, at(5)); focus.reset(); focus.init(d2);
 assert.strictEqual(focus.summary({}, at(5)).frogs[0].t, 'persist');
+// spaced repetition
+const fresh = () => { focus.reset(); focus.init(fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-focus-'))); };
+const day = n => new Date(2026, 0, n, 10, 0, 0);   // n may run past the end of January
+const s = (n, c = {}) => focus.summary(c, day(n));
+const w = (type, n, c = {}) => focus.act(type, {}, c, day(n));
+
+// intervals 1, 3, 7, 14, 30 days, then the word counts as learned
+fresh(); const one = { focus: { newPerDay: 1 } };
+const first = s(1, one).word.de; assert(s(1, one).word.isNew);
+w('wordKnown', 1, one); assert.strictEqual(s(1, one).word, null, 'one new word a day, nothing else due');
+const card = () => Object.entries(focus._db().cards).find(([k]) => k.startsWith(first + '|'))[1];
+let n = 1;
+for (const gap of focus.STEPS) {
+  assert.strictEqual(card().due, new Date(Date.UTC(2026, 0, n + gap)).toISOString().slice(0, 10), 'interval ' + gap);
+  n += gap;
+  assert.strictEqual(s(n, one).word.de, first, 'a due review comes before new words'); assert.strictEqual(s(n, one).words.due >= 1, true);
+  assert.strictEqual(s(n, one).learned.month, 0);
+  if (gap !== 30) w('wordKnown', n, one);
+}
+w('wordKnown', n, one); assert(card().done, 'learned after the 30-day review'); assert.strictEqual(s(n, one).learned.day, 1);
+assert.notStrictEqual((s(n + 60, one).word || {}).de, first, 'a learned word never returns');
+
+// daily limit of new words, "don't know" returns the same day after the others
+fresh(); const two = { focus: { newPerDay: 2 } };
+const a = s(1, two).word.de; w('wordAgain', 1, two);
+const b = s(1, two).word.de; assert.notStrictEqual(b, a, 'the others go first'); assert.deepStrictEqual(s(1, two).words, { due: 1, newLeft: 1 });
+w('wordKnown', 1, two);
+assert.strictEqual(s(1, two).word.de, a, 'the unknown word comes back'); assert.strictEqual(s(1, two).words.newLeft, 0);
+w('wordAgain', 1, two); assert.strictEqual(s(1, two).word.de, a, 'and stays until known');
+w('wordKnown', 1, two); assert.strictEqual(s(1, two).word, null);
+assert.strictEqual(s(2, two).words.due, 2); assert.strictEqual(s(2, two).words.newLeft, 2);
+focus.act('wordKnown', { id: 'stale card' }, two, day(2)); assert.strictEqual(s(2, two).words.due, 2, 'a click on an old card changes nothing');
+assert.strictEqual(focus.opts({ focus: { newPerDay: 99 } }).newPerDay, 20);
+
+// data from 0.11: ticked words continue at the 7-day step, 5 a day; counters survive
+const old = fs.mkdtempSync(path.join(os.tmpdir(), 'pcm-focus-'));
+const { WORDS } = require('../src/focus-data');
+fs.writeFileSync(path.join(old, 'focus.json'), JSON.stringify({ known: WORDS.slice(0, 12), shift: { day: '2026-01-01', word: 3, phrase: 1 }, learned: { '2026-01-01': 12 } }));
+focus.reset(); focus.init(old);
+assert.strictEqual(s(1).words.due, 5); assert.strictEqual(s(2).words.due, 10); assert.strictEqual(s(3).words.due, 12); assert.strictEqual(s(3).learned.month, 12);
+w('wordKnown', 3); assert.strictEqual(focus._db().cards[WORDS[0]].due, '2026-01-17', 'next interval after 7 days is 14');
+focus.reset(); focus.init(old); assert.strictEqual(s(3).words.due, 11, 'progress survives a restart');
 console.log('focus: all checks passed');
